@@ -1,2 +1,1 @@
-# sunstead
-hackathon
+sunstead hackathon
