@@ -22,8 +22,8 @@ export async function POST(req: Request) {
   // Roster. In play mode we seat the human alongside four AI players.
   let names: string[] = Array.isArray(body?.names) && body.names.length ? body.names : [];
   if (mode === 'play') {
-    const ai = (names.length ? names : ['GPT', 'Claude', 'Gemini', 'DeepSeek']).filter((n) => n !== HUMAN_NAME);
-    names = [...ai.slice(0, 4), HUMAN_NAME];
+    const ai = (names.length ? names : ['GPT', 'Claude', 'Gemini', 'DeepSeek', 'Qwen']).filter((n) => n !== HUMAN_NAME);
+    names = [...ai.slice(0, 5), HUMAN_NAME];
   }
 
   const gameId = crypto.randomUUID();
@@ -45,11 +45,14 @@ export async function POST(req: Request) {
       let humanIsMafia = false;
 
       // In play mode, hide what a fair player shouldn't see: AI private reasoning,
-      // other roles, and the Mafia channel (unless the human is Mafia).
+      // other roles, the Mafia channel (unless the human is Mafia), other players'
+      // night actions, and other players' private findings (e.g. an AI Detective's).
       const emit = (e: GameEvent) => {
         if (mode === 'play') {
           if (e.type === 'beliefs') return;
           if (e.type === 'whisper' && !humanIsMafia) return;
+          if (e.type === 'action' && e.agent !== humanId) return;
+          if (e.type === 'knowledge' && e.agent !== humanId) return;
         }
         send(e);
       };
@@ -130,7 +133,8 @@ export async function POST(req: Request) {
 // Describe the human's legal options this turn so the client can render inputs.
 function requestAction(state: GameState, agent: AgentState, tools: GameTool[]) {
   const names = (ps: AgentState[]) => ps.map((p) => ({ id: p.id, name: p.name }));
-  const aliveOthers = state.players.filter((p) => p.alive && p.id !== agent.id);
+  const alive = state.players.filter((p) => p.alive);
+  const aliveOthers = alive.filter((p) => p.id !== agent.id);
   return {
     type: 'request_action',
     agent: agent.id,
@@ -139,6 +143,8 @@ function requestAction(state: GameState, agent: AgentState, tools: GameTool[]) {
     legal: tools.map((t) => t.name),
     alive: names(aliveOthers),
     killTargets: names(aliveOthers.filter((p) => p.role !== 'mafia')),
+    investigateTargets: names(aliveOthers), // Detective: anyone but yourself
+    protectTargets: names(alive), // Doctor: anyone alive, including yourself
     teammates: agent.role === 'mafia' ? names(state.players.filter((p) => p.alive && p.role === 'mafia' && p.id !== agent.id)) : [],
   };
 }

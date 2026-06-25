@@ -191,6 +191,13 @@ const investigate: GameTool = {
     ctx.agent.private.knowledge = ctx.agent.private.knowledge ?? [];
     ctx.agent.private.knowledge.push(`Round ${ctx.state.round}: ${t.name} is ${result}.`);
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'investigate', target: t.id });
+    ctx.emit({
+      type: 'knowledge',
+      agent: ctx.agent.id,
+      target: t.id,
+      result,
+      text: `${t.name} is ${result}.`,
+    });
     return `Your investigation: ${t.name} is ${result}. Keep this secret for now.`;
   },
 };

@@ -8,13 +8,16 @@ import { usePushToTalk } from './usePushToTalk';
 // ── shapes mirrored from engine/types GameEvent (kept loose on the client) ──────
 type Player = { id: string; name: string; role: string; model?: string | null; alive: boolean; human?: boolean };
 type Beliefs = { reasoning: string; suspicions: Record<string, number> };
+type NameRef = { id: string; name: string };
 type Turn = {
   agent: string;
   phase: string;
   legal: string[];
-  alive: { id: string; name: string }[];
-  killTargets: { id: string; name: string }[];
-  teammates: { id: string; name: string }[];
+  alive: NameRef[];
+  killTargets: NameRef[];
+  investigateTargets: NameRef[];
+  protectTargets: NameRef[];
+  teammates: NameRef[];
 };
 type Feed =
   | { k: 'phase'; phase: string; round: number }
@@ -22,6 +25,7 @@ type Feed =
   | { k: 'whisper'; who: string; text: string }
   | { k: 'system'; text: string }
   | { k: 'vote'; who: string; target: string }
+  | { k: 'knowledge'; who: string; text: string }
   | { k: 'win'; winner: string }
   | { k: 'error'; text: string };
 
@@ -37,6 +41,7 @@ export default function Home() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [feed, setFeed] = useState<Feed[]>([]);
   const [beliefs, setBeliefs] = useState<Record<string, Beliefs>>({});
+  const [knowledge, setKnowledge] = useState<Record<string, string[]>>({});
   const [phase, setPhase] = useState<{ phase: string; round: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
@@ -124,6 +129,10 @@ export default function Home() {
         case 'vote':
           setFeed((f) => [...f, { k: 'vote', who: e.agent, target: e.target }]);
           break;
+        case 'knowledge':
+          setKnowledge((kn) => ({ ...kn, [e.agent]: [...(kn[e.agent] ?? []), e.text] }));
+          setFeed((f) => [...f, { k: 'knowledge', who: e.agent, text: e.text }]);
+          break;
         case 'request_action':
           setTurn(e as Turn);
           break;
@@ -152,6 +161,7 @@ export default function Home() {
       setPlayers([]);
       setFeed([]);
       setBeliefs({});
+      setKnowledge({});
       setWinner(null);
       setPhase(null);
       setTurn(null);
@@ -204,6 +214,9 @@ export default function Home() {
   const submitAction = useCallback(
     async (tool: string, args: any) => {
       setTurn(null);
+      // Local confirmation for your own secret night actions.
+      if (tool === 'protect') setFeed((f) => [...f, { k: 'system', text: `🛡 You protected ${args.target} tonight.` }]);
+      if (tool === 'investigate') setFeed((f) => [...f, { k: 'system', text: `🔎 You investigated ${args.target}…` }]);
       try {
         await fetch('/api/game/action', {
           method: 'POST',
@@ -363,6 +376,19 @@ export default function Home() {
                   <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-neutral-300">
                     {sel.human ? 'That’s up to you.' : selBeliefs?.reasoning ?? '…'}
                   </p>
+
+                  {(knowledge[sel.id]?.length ?? 0) > 0 && (
+                    <>
+                      <h3 className="mt-4 text-xs uppercase tracking-wider text-sky-400/70">🔎 Findings</h3>
+                      <ul className="mt-2 space-y-1">
+                        {knowledge[sel.id].map((k, i) => (
+                          <li key={i} className="text-xs text-sky-300/90">
+                            {k}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
                 </>
               )}
             </>
@@ -492,22 +518,62 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
               </button>
             </div>
           )}
-          <div className="flex items-end gap-2">
-            <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
-              <option value="">choose tonight’s kill…</option>
-              {turn.killTargets.map((p) => (
-                <option key={p.id} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={() => target && onSubmit('mafia_propose_kill', { target })}
-              className="rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-red-500"
-            >
-              Kill
-            </button>
-          </div>
+          {turn.legal.includes('mafia_propose_kill') && (
+            <div className="flex items-end gap-2">
+              <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
+                <option value="">choose tonight’s kill…</option>
+                {turn.killTargets.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => target && onSubmit('mafia_propose_kill', { target })}
+                className="rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-red-500"
+              >
+                Kill
+              </button>
+            </div>
+          )}
+          {turn.legal.includes('investigate') && (
+            <div className="flex items-end gap-2">
+              <span className="text-xs text-sky-300/80">🔎 Detective — investigate one player:</span>
+              <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
+                <option value="">who to investigate…</option>
+                {turn.investigateTargets.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => target && onSubmit('investigate', { target })}
+                className="rounded border border-sky-500/50 px-4 py-1.5 text-sm font-semibold text-sky-200 hover:bg-sky-500/10"
+              >
+                Investigate
+              </button>
+            </div>
+          )}
+          {turn.legal.includes('protect') && (
+            <div className="flex items-end gap-2">
+              <span className="text-xs text-teal-300/80">🛡 Doctor — protect one player:</span>
+              <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
+                <option value="">who to protect…</option>
+                {turn.protectTargets.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => target && onSubmit('protect', { target })}
+                className="rounded border border-teal-500/50 px-4 py-1.5 text-sm font-semibold text-teal-200 hover:bg-teal-500/10"
+              >
+                Protect
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -547,6 +613,12 @@ function FeedLine({ it, nameOf }: { it: Feed; nameOf: (id: string) => string }) 
       return (
         <p className="text-xs text-yellow-300/80">
           🗳 {nameOf(it.who)} → {nameOf(it.target)}
+        </p>
+      );
+    case 'knowledge':
+      return (
+        <p className="text-sm text-sky-300/90">
+          🔎 <span className="font-semibold">{nameOf(it.who)} learned:</span> {it.text}
         </p>
       );
     case 'system':

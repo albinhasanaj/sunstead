@@ -69,6 +69,7 @@ export type GameEvent =
   | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string }
   | { type: 'whisper'; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)
   | { type: 'action'; agent: PlayerId; kind: string; target?: PlayerId }
+  | { type: 'knowledge'; agent: PlayerId; target: PlayerId; result: string; text: string } // private finding (e.g. Detective)
   | { type: 'death'; target: PlayerId; role: string }
   | { type: 'vote'; agent: PlayerId; target: PlayerId }
   | { type: 'reveal'; target: PlayerId; role: string }
