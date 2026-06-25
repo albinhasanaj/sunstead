@@ -21,6 +21,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export type ScenePlayer = { id: string; name: string; role: string; alive: boolean; human?: boolean };
 export type Props = {
@@ -544,6 +545,21 @@ export default function TribunalScene(props: Props) {
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
+    // Free orbit/zoom/pan camera — used ONLY in watch mode (spectator). In play
+    // mode it's disabled and the camera is locked first-person to the human seat.
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.rotateSpeed = 0.5;
+    controls.zoomSpeed = 0.8;
+    controls.panSpeed = 0.6;
+    controls.minDistance = 2.5;
+    controls.maxDistance = 18;
+    controls.maxPolarAngle = Math.PI * 0.49; // don't dip under the floor
+    controls.target.set(0, 1.05, 0);
+    controls.enabled = false;
+    let controlsReady = false; // becomes true once we've seeded the spectator vantage
+
     // ── player figures (rebuilt by syncPlayers) ──
     let seats: Seat[] = [];
     const seatById = new Map<string, Seat>();
@@ -738,7 +754,7 @@ export default function TribunalScene(props: Props) {
     const ray = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
     let hoveredId: string | null = null; // seat under the cursor during a pick turn
-    function onPointerDown(e: PointerEvent) {
+    function selectAt(e: PointerEvent) {
       const rect = renderer.domElement.getBoundingClientRect();
       ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
@@ -759,7 +775,19 @@ export default function TribunalScene(props: Props) {
         live.current.onSelect(''); // empty space → deselect
       }
     }
+    // Distinguish a click (select a face) from a drag (orbit the camera in watch
+    // mode), so dragging to look around never accidentally selects/deselects.
+    let downX = 0;
+    let downY = 0;
+    function onPointerDown(e: PointerEvent) {
+      downX = e.clientX;
+      downY = e.clientY;
+    }
+    function onPointerUp(e: PointerEvent) {
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) <= 6) selectAt(e);
+    }
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
 
     // mouse free-look — turns your head by moving the look TARGET (never the camera
     // position, which would mirror the world). Not inverted.
@@ -817,15 +845,29 @@ export default function TribunalScene(props: Props) {
       const awake = isSpectator || p.myRole === 'mafia' || !!p.turn;
       const v = viewTarget(p.phase, p.myRole, awake);
 
-      // first-person look: face across the table from your seat; mouse pans/tilts.
-      const forwardAngle = Math.atan2(-eye.z, -eye.x);
-      tmpFwd.set(Math.cos(forwardAngle), 0, Math.sin(forwardAngle));
-      tmpRight.copy(tmpFwd).cross(UP); // camera right
-      target.copy(eye).addScaledVector(tmpFwd, 6).addScaledVector(tmpRight, par.x * 7);
-      target.y = 1.35 - par.y * 1.6;
-      aim.lerp(target, 0.12);
-      camera.position.copy(eye);
-      camera.lookAt(aim);
+      if (isSpectator) {
+        // Watch mode: free orbit/zoom/pan around the table.
+        if (!controlsReady) {
+          camera.position.copy(eye); // seed from the default spectator vantage
+          controls.target.set(0, 1.05, 0);
+          controls.enabled = true;
+          controls.update();
+          controlsReady = true;
+        }
+        controls.update();
+      } else {
+        // Play mode: locked first-person from your seat; the mouse pans/tilts.
+        if (controls.enabled) controls.enabled = false;
+        controlsReady = false;
+        const forwardAngle = Math.atan2(-eye.z, -eye.x);
+        tmpFwd.set(Math.cos(forwardAngle), 0, Math.sin(forwardAngle));
+        tmpRight.copy(tmpFwd).cross(UP); // camera right
+        target.copy(eye).addScaledVector(tmpFwd, 6).addScaledVector(tmpRight, par.x * 7);
+        target.y = 1.35 - par.y * 1.6;
+        aim.lerp(target, 0.12);
+        camera.position.copy(eye);
+        camera.lookAt(aim);
+      }
 
       // ease lights/fog/bloom/background toward the role-filtered target
       const fog = scene.fog as THREE.FogExp2;
@@ -1034,7 +1076,9 @@ export default function TribunalScene(props: Props) {
       window.removeEventListener('resize', onResize);
       ro.disconnect();
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      controls.dispose();
       apiRef.current = null;
       clearFigures();
       scene.traverse((obj) => {
