@@ -14,7 +14,12 @@ export async function takeTurn(
 ): Promise<void> {
   const ctx: ToolContext = { state, agent, emit };
   const legalTools = def.toolsFor(state, agent).filter((t) => t.legalIn(state, agent));
-  if (legalTools.length === 0) return;
+  if (legalTools.length === 0) {
+    console.log(`[turn] ${agent.name} (${state.phase}) — no legal tools, skipping`);
+    return;
+  }
+  const turnStart = Date.now();
+  console.log(`[turn] ▶ ${agent.name} (${state.phase} r${state.round}) — tools: ${legalTools.map((t) => t.name).join(', ')}`);
 
   // Wrap each GameTool as an AI SDK tool. The execute mutates state + emits events.
   const tools = Object.fromEntries(
@@ -41,11 +46,13 @@ export async function takeTurn(
   // Memory must never break a turn, so any failure is swallowed.
   let prompt = baseContext;
   if (def.recallForTurn) {
+    const t0 = Date.now();
     try {
       const mem = await def.recallForTurn(state, agent);
       if (mem) prompt = `${baseContext}\n\n${mem}`;
+      console.log(`[turn]   ${agent.name} · memory recall took ${Date.now() - t0}ms${mem ? '' : ' (no hits)'}`);
     } catch (err) {
-      console.error(`[agent ${agent.name}] recall failed:`, (err as Error).message);
+      console.error(`[turn]   ${agent.name} · recall FAILED after ${Date.now() - t0}ms:`, (err as Error).message);
     }
   }
 
@@ -69,9 +76,11 @@ export async function takeTurn(
   // scheduler can have several of these lit at once — the UI/terminal use it to
   // show (and let us verify) concurrent deliberation.
   emit({ type: 'thinking', agent: agent.id, on: true });
+  const llmStart = Date.now();
   try {
     try {
       await run(model);
+      console.log(`[turn]   ${agent.name} · LLM (${model}) took ${Date.now() - llmStart}ms`);
     } catch (err) {
       // A single provider hiccup (rate limit, gated model) shouldn't stall the table.
       // Retry once on the fallback model so the seat still gets to act this turn.
@@ -89,6 +98,7 @@ export async function takeTurn(
     }
   } finally {
     emit({ type: 'thinking', agent: agent.id, on: false });
+    console.log(`[turn] ◀ ${agent.name} done in ${Date.now() - turnStart}ms`);
   }
 }
 
