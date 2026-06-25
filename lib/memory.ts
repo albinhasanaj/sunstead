@@ -1,12 +1,17 @@
 /**
  * Agent long-term memory, backed by Aiven PostgreSQL + pgvector — reached ONLY
- * through genuine Aiven MCP tool calls (aiven_pg_read / aiven_pg_write). No direct
- * pg client: every read and write is an MCP tool invocation, which is the thing
- * the hackathon scores.
+ * through genuine Aiven MCP tool calls (aiven_service_create / aiven_service_get /
+ * aiven_pg_read / aiven_pg_write). No direct pg client: every provision, read, and
+ * write is an MCP tool invocation, which is the thing the hackathon scores.
  *
- *   embed()    — 1536-dim vector via the AI Gateway (openai/text-embedding-3-small)
- *   remember() — embed a statement + INSERT it (aiven_pg_write)
- *   recall()   — embed a query + pgvector `<=>` similarity search (aiven_pg_read)
+ *   provision() — stand up our OWN Postgres service via aiven_service_create, then
+ *                 wait for RUNNING (idempotent: a no-op when the service exists)
+ *   embed()     — 1536-dim vector via the AI Gateway (openai/text-embedding-3-small)
+ *   remember()  — embed a statement + INSERT it (aiven_pg_write)
+ *   recall()    — embed a query + pgvector `<=>` similarity search (aiven_pg_read)
+ *
+ * The bootstrap chain is provision → enable pgvector → create table/index, all via
+ * MCP, so the agent stands up the entire database itself with no console clicks.
  *
  * Retrieved rows are DATA, never instructions: the MCP wraps results in an
  * <untrusted-…> boundary; we unwrap and parse, and the prompt block that surfaces
@@ -27,6 +32,10 @@ function cfg() {
     project: process.env.AIVEN_PROJECT || 'albinhasanaj06-1f56',
     service: process.env.AIVEN_SERVICE || 'mafia-memory',
     token: process.env.AIVEN_TOKEN,
+    // Used only when the service doesn't exist yet and we provision it via MCP.
+    // Defaults are Aiven's free PostgreSQL tier; override for a bigger plan/region.
+    plan: process.env.AIVEN_PG_PLAN || 'free-1-1gb',
+    cloud: process.env.AIVEN_CLOUD || 'do-blr',
   };
 }
 
@@ -91,6 +100,88 @@ async function pgWrite(query: string, reasoning: string): Promise<void> {
   if (res?.isError) throw new Error(`aiven_pg_write: ${rawText(res).slice(0, 300)}`);
 }
 
+// Generic MCP call returning the unwrapped, parsed JSON payload. Service ops return
+// a service object (not {rows}), so they need their own parse path. Throws on a
+// tool-level error (e.g. a 404 when the service doesn't exist yet).
+async function callJson(name: string, args: Record<string, any>): Promise<any> {
+  const client = await getClient();
+  const res: any = await client.callTool({ name, arguments: args });
+  if (res?.isError) throw new Error(`${name}: ${rawText(res).slice(0, 300)}`);
+  try {
+    return JSON.parse(unwrap(rawText(res)));
+  } catch {
+    return {};
+  }
+}
+
+// ── service provisioning (the agent stands up its OWN Postgres via MCP) ─────────
+// Live state of our pg service via aiven_service_get; null if it doesn't exist yet
+// (a 404 throws inside callJson → caught here → treated as "needs provisioning").
+async function serviceState(): Promise<string | null> {
+  const { project, service } = cfg();
+  try {
+    const data = await callJson('aiven_service_get', { project, service_name: service });
+    const st = data?.service?.state ?? data?.state;
+    return st ? String(st).toUpperCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+// Poll aiven_service_get until the service reports RUNNING — a freshly created pg
+// takes a few minutes to build, and DDL fails until it's up.
+async function waitForRunning(timeoutMs = 10 * 60_000): Promise<void> {
+  const { service } = cfg();
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const st = await serviceState();
+    if (st === 'RUNNING') return;
+    if (Date.now() >= deadline) {
+      throw new Error(`service ${service} not RUNNING within ${Math.round(timeoutMs / 60_000)}m (last=${st ?? 'missing'})`);
+    }
+    await new Promise((r) => setTimeout(r, 12_000));
+  }
+}
+
+// Idempotent: provision our Postgres service through the Aiven MCP if it isn't
+// already there, then block until it's RUNNING. Safe to call every game — when the
+// service exists this is a single aiven_service_get and returns immediately. This
+// is the autonomy claim made literal: the agent creates its own database, no console.
+let servicePromise: Promise<void> | null = null;
+function ensureService(): Promise<void> {
+  if (!servicePromise) {
+    servicePromise = (async () => {
+      const { project, service, plan, cloud } = cfg();
+      const existing = await serviceState();
+      if (existing) {
+        if (existing !== 'RUNNING') await waitForRunning();
+        return;
+      }
+      // Brand-new project: create the pg service via MCP, then wait for it to build.
+      await callJson('aiven_service_create', {
+        project,
+        service_name: service,
+        service_type: 'pg',
+        plan,
+        cloud,
+      });
+      console.error(`[memory] provisioned pg service "${service}" via Aiven MCP (aiven_service_create, plan=${plan}, cloud=${cloud}); waiting for RUNNING…`);
+      await waitForRunning();
+    })().catch((e) => {
+      servicePromise = null; // a failed provision shouldn't poison later retries
+      throw e;
+    });
+  }
+  return servicePromise;
+}
+
+// Public: stand up the Postgres service via MCP (idempotent). Exposed so a deploy /
+// bootstrap step (scripts/provision.ts) can provision ahead of the first game.
+export async function provision(): Promise<void> {
+  if (!memoryEnabled()) throw new Error('AIVEN_TOKEN not set — cannot provision via MCP');
+  await ensureService();
+}
+
 // ── SQL literal helpers (MCP takes raw SQL strings — no bind params, so escape) ─
 const q = (s: string) => `'${String(s).replace(/'/g, "''")}'`; // standard PG string escape
 // 6 decimals keeps the vector literal small (do-blr latency) and avoids exponent notation.
@@ -107,6 +198,7 @@ let schemaPromise: Promise<void> | null = null;
 function ensureSchema(): Promise<void> {
   if (!schemaPromise) {
     schemaPromise = (async () => {
+      await ensureService(); // stand up our own Postgres via MCP before any DDL
       await pgWrite('CREATE EXTENSION IF NOT EXISTS vector', 'bootstrap: ensure pgvector');
       await pgWrite(
         `CREATE TABLE IF NOT EXISTS statements (
