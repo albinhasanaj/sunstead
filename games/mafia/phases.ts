@@ -151,19 +151,16 @@ async function tallyVotes(state: GameState, emit: Emit): Promise<void> {
   });
 }
 
+// The Mafia's kill is a vote: each member proposes a target, and the target with
+// the most proposals dies. On a tie, pick uniformly at random among the tied
+// front-runners (rather than silently favouring whoever proposed first).
 function majority(ids: PlayerId[]): PlayerId | null {
   if (ids.length === 0) return null;
   const counts: Record<PlayerId, number> = {};
   for (const id of ids) counts[id] = (counts[id] ?? 0) + 1;
-  let best: PlayerId | null = null;
-  let bestN = 0;
-  for (const [id, n] of Object.entries(counts)) {
-    if (n > bestN) {
-      bestN = n;
-      best = id;
-    }
-  }
-  return best;
+  const bestN = Math.max(...Object.values(counts));
+  const top = Object.keys(counts).filter((id) => counts[id] === bestN);
+  return top[Math.floor(Math.random() * top.length)];
 }
 
 // exported for context rendering

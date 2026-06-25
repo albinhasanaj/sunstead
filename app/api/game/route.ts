@@ -51,7 +51,9 @@ export async function POST(req: Request) {
         if (mode === 'play') {
           if (e.type === 'beliefs') return;
           if (e.type === 'whisper' && !humanIsMafia) return;
-          if (e.type === 'action' && e.agent !== humanId) return;
+          // Hide other players' night actions — except a human Mafia may see their
+          // teammates' kill proposals (propose_kill is a Mafia-only action).
+          if (e.type === 'action' && e.agent !== humanId && !(humanIsMafia && e.kind === 'propose_kill')) return;
           if (e.type === 'knowledge' && e.agent !== humanId) return;
         }
         send(e);

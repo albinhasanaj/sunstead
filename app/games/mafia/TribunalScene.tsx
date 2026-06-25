@@ -37,6 +37,7 @@ export type Props = {
   findings?: Record<string, 'mafia' | 'town'>; // detective: investigated → result
   teammates?: string[]; // mafia: your allies' ids
   protectedId?: string | null; // doctor: who you shielded
+  killVotes?: Record<string, string[]>; // mafia: target id → names of who voted to kill them
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -751,7 +752,11 @@ export default function TribunalScene(props: Props) {
         const glowI = talking ? 0.45 + Math.sin(t * 18) * 0.2 : p.accusedId === s.id ? 0.5 : 0;
         if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, glowI, 0.12);
 
-        // ring colour: accused (amber) > dead (red) > speaking (cyan) > idle
+        // who voted to kill this seat (Mafia, at night, from your seat only)
+        const killVoters = !isSpectator && p.phase === 'NIGHT' && p.myRole === 'mafia' ? p.killVotes?.[s.id] : undefined;
+        const isKillTarget = !!killVoters && killVoters.length > 0;
+
+        // ring colour: accused (amber) > dead (red) > speaking (cyan) > kill-target (red) > idle
         const rm = s.ring.material as THREE.MeshBasicMaterial;
         if (p.accusedId === s.id) {
           rm.color.set(0xf0b54a);
@@ -762,6 +767,9 @@ export default function TribunalScene(props: Props) {
         } else if (talking) {
           rm.color.set(0x5fd0ff);
           rm.opacity = 0.42 + Math.sin(t * 16) * 0.1;
+        } else if (isKillTarget) {
+          rm.color.set(0xe0454f);
+          rm.opacity = 0.5 + Math.sin(t * 7) * 0.14;
         } else {
           rm.color.set(0x2a3148);
           rm.opacity = 0.22;
@@ -776,7 +784,9 @@ export default function TribunalScene(props: Props) {
         // overhead secret-status tag — your private role knowledge, made obvious.
         // Only ever shown to a seated player (never the watch-mode spectator).
         if (s.tag && s.tagMat) {
-          const want = isSpectator ? null : tagFor(s.id, p.findings, p.teammates, p.protectedId);
+          let want = isSpectator ? null : tagFor(s.id, p.findings, p.teammates, p.protectedId);
+          // kill-vote marker takes over a town target's tag during the Mafia night
+          if (!want && isKillTarget) want = { text: `⚔ ${killVoters!.join('·')}`, color: '#e0454f' };
           const key = want ? want.text : '';
           if (key !== s.tagKey) {
             s.tagKey = key;
