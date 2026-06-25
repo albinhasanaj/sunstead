@@ -364,11 +364,10 @@ export default function Home() {
   // move otherwise). `discussionTurn` is non-null exactly when it's your turn.
   const inDiscussion = mode === 'play' && phase?.phase === 'DISCUSSION' && !!me?.alive;
   const discussionTurn = myTurn && myTurn.phase === 'DISCUSSION' ? myTurn : null;
-  const nightWhisper = myTurn && myTurn.phase === 'NIGHT' && myTurn.legal.includes('mafia_discuss') ? myTurn : null;
-  const showBar = inDiscussion || !!nightWhisper;
+  // The night is silent — no whisper bar. Discussion is the only free-text phase.
+  const showBar = inDiscussion;
 
-  // Mafia private channel — surface teammates' whispers + kill proposals live.
-  const whispers = useMemo(() => feed.filter((f): f is Extract<Feed, { k: 'whisper' }> => f.k === 'whisper'), [feed]);
+  // Mafia private channel — your allies + the targets they've silently picked.
   const showMafiaChannel = mode === 'play' && myRole === 'mafia' && phase?.phase === 'NIGHT' && !!me?.alive;
   // target id → names of the Mafia who voted to kill them (for obvious scene markers)
   const killVotes = useMemo(() => {
@@ -666,32 +665,39 @@ export default function Home() {
       {showMafiaChannel && (
         <div className="absolute left-3 top-16 z-30 flex max-h-[42vh] w-72 flex-col rounded-xl border border-fuchsia-500/30 bg-neutral-950/80 backdrop-blur">
           <div className="border-b border-fuchsia-500/20 px-3 py-2">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-fuchsia-300">🤫 Mafia channel</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-fuchsia-300">🔪 Mafia · night</div>
             <div className="mt-0.5 truncate text-[10px] text-fuchsia-300/60">
               {teammates.length ? `with ${teammates.map((id) => nameOf(id)).join(', ')}` : 'you’re the lone wolf'}
             </div>
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
-            {whispers.length === 0 ? (
-              <p className="text-[11px] text-neutral-500">No whispers yet. Your partner is deciding…</p>
-            ) : (
-              whispers.slice(-12).map((w, i) => (
-                <p key={i} className="text-xs leading-snug text-fuchsia-200/90">
-                  <span className="font-semibold">{nameOf(w.who)}:</span> {w.text}
-                </p>
-              ))
-            )}
+            <p className="text-[11px] leading-snug text-fuchsia-300/60">No talking at night — point at a victim. Click a face in the scene, then press Kill.</p>
+            {(() => {
+              const team = [...(humanId ? [humanId] : []), ...teammates];
+              return team.map((id) => {
+                const pick = killVotesByAgent[id];
+                return (
+                  <p key={id} className="text-xs leading-snug text-fuchsia-200/90">
+                    <span className="font-semibold">
+                      {nameOf(id)}
+                      {id === humanId ? ' (you)' : ''}:
+                    </span>{' '}
+                    {pick ? <span className="text-red-300">⚔ {nameOf(pick)}</span> : <span className="text-neutral-500">choosing…</span>}
+                  </p>
+                );
+              });
+            })()}
           </div>
         </div>
       )}
 
-      {/* free-text action bar — DISCUSSION speech (always visible during the phase,
-          enabled on your turn) / Mafia night whisper. Pinned to the bottom. */}
+      {/* free-text action bar — DISCUSSION speech only (always visible during the
+          phase, enabled on your turn). The night is silent: no whisper bar. */}
       {showBar && (
         <div className="absolute inset-x-0 bottom-0 z-30">
           <ActionBar
-            phase={nightWhisper ? 'NIGHT' : 'DISCUSSION'}
-            turn={nightWhisper ?? discussionTurn}
+            phase="DISCUSSION"
+            turn={discussionTurn}
             players={players}
             onSubmit={submitAction}
           />
@@ -1096,32 +1102,8 @@ function ActionBar({
       )}
 
       {/* VOTE and the night target-picks (kill / investigate / protect) are driven
-          by clicking a face in the 3D scene + its action buttons. Here we only keep
-          the free-text Mafia night whisper. */}
-      {phase === 'NIGHT' && (
-        <div className="space-y-2">
-          {!!turn && turn.teammates.length > 0 && (
-            <div className="text-xs text-fuchsia-300/80">Your Mafia team: {turn.teammates.map((t) => t.name).join(', ') || '—'}</div>
-          )}
-          <div className="flex items-end gap-2">
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="whisper to your team…"
-              className="flex-1 rounded border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm"
-            />
-            <Mic />
-            <button
-              onClick={() => myTurn && text && onSubmit('mafia_discuss', { message: text })}
-              disabled={!myTurn}
-              className="rounded border border-fuchsia-500/40 px-3 py-1.5 text-sm font-semibold text-fuchsia-200 transition hover:bg-fuchsia-500/10 disabled:opacity-40"
-            >
-              Whisper
-            </button>
-          </div>
-          <div className="text-xs text-neutral-500">Click a face in the scene, then use the on-screen buttons to act.</div>
-        </div>
-      )}
+          by clicking a face in the 3D scene + its action buttons. The night is
+          silent — there is no whisper input. */}
     </div>
   );
 

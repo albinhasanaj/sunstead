@@ -1,68 +1,52 @@
 import { GoogleButton } from "./_components/GoogleButton";
 import { SiteNav } from "./_components/SiteNav";
 
-// Placeholder slots for the LinkedIn / video embeds. Drop a URL into `src`
-// (e.g. a LinkedIn post embed or YouTube embed URL) and the iframe renders.
-const VIDEOS: { id: string; label: string; src?: string }[] = [
-  { id: "ai-vs-ai", label: "AI vs AI — Mafia in the lab" },
-  { id: "ceo-vs-ceo", label: "Tech CEO vs Tech CEO" },
-  { id: "going-viral", label: "Why it's blowing up" },
+// The two clips play side by side, muted-autoplaying and looping.
+const VIDEOS: { id: string; label: string; src: string }[] = [
+  { id: "mafia", label: "Mafia, AI vs AI", src: "/mafia.mp4" },
+  { id: "mafia-2", label: "Tech CEO vs Tech CEO", src: "/mafia-2.mp4" },
 ];
 
-function Eyebrow({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-muted">{children}</p>
-  );
-}
+const CARDS: { title: string; body: string }[] = [
+  {
+    title: "Pick a game, take a seat.",
+    body: "Jump into a live table and start talking. Your voice goes straight into the round.",
+  },
+  {
+    title: "Outtalk the models.",
+    body: "Persuade, deceive, and deduce your way to the last seat standing.",
+  },
+  {
+    title: "Endless game concepts.",
+    body: "Mafia, debate, negotiation, interrogation — any game where talking and reading people decides who wins.",
+  },
+  {
+    title: "Your brain, switched on.",
+    body: "Every round is a rep. The more you play, the sharper you think.",
+  },
+];
 
-// Placeholder icon slot. Provide an asset path in `src` later; until then it
-// shows a subtle bordered square so the layout is intact.
-function IconSlot({ src, alt }: { src?: string; alt?: string }) {
+// Renders a 16:9 local clip that fills its column, autoplaying and looping.
+function VideoEmbed({ src, title }: { src: string; title: string }) {
   return (
-    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--hairline)] bg-stage-raised">
-      {src ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={alt ?? ""} className="h-6 w-6 object-contain" />
-      ) : (
-        <span className="h-2.5 w-2.5 rounded-sm bg-white/20" />
-      )}
-    </span>
-  );
-}
-
-// Placeholder video embed. Drop a URL into `src` to render the iframe;
-// otherwise a labelled 16:9 dashed frame holds the space.
-function VideoEmbed({ label, src }: { label: string; src?: string }) {
-  return (
-    <figure className="group">
-      <div className="relative aspect-[16/9] overflow-hidden rounded-2xl border border-[var(--hairline)] bg-stage-raised">
-        {src ? (
-          <iframe
-            src={src}
-            title={label}
-            allow="autoplay; encrypted-media; picture-in-picture"
-            allowFullScreen
-            className="absolute inset-0 h-full w-full"
-          />
-        ) : (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 border border-dashed border-white/10 text-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15">
-              <span className="ml-1 h-0 w-0 border-y-[8px] border-l-[13px] border-y-transparent border-l-white/40" />
-            </span>
-            <span className="px-4 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
-              Paste LinkedIn / video URL
-            </span>
-          </div>
-        )}
-      </div>
-      <figcaption className="mt-3 text-sm text-muted">{label}</figcaption>
-    </figure>
+    <div className="relative aspect-[16/9] overflow-hidden rounded-2xl border border-[var(--hairline)] bg-stage-raised">
+      <video
+        src={src}
+        title={title}
+        autoPlay
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+    </div>
   );
 }
 
 export default function Landing() {
   return (
-    <div className="relative flex min-h-screen flex-col overflow-x-clip bg-stage text-foreground">
+    <div className="relative flex min-h-screen flex-col overflow-x-clip bg-black text-foreground">
       <SiteNav />
 
       {/* ── HERO ──────────────────────────────────────────────── */}
@@ -95,31 +79,16 @@ export default function Landing() {
 
       {/* ── MANIFESTO ─────────────────────────────────────────── */}
       <section id="what" className="mx-auto w-full max-w-5xl px-5 sm:px-8">
-        {/* Beat 1 — the problem: we're outsourcing our minds */}
-        <div className="border-b border-[var(--hairline)] py-28 sm:py-36">
-          <Eyebrow>The quiet cost</Eyebrow>
-          <h2 className="mt-7 max-w-4xl font-display text-[clamp(2rem,5.5vw,3.75rem)] font-bold leading-[1.04]">
-            Every time we let AI do our thinking, we lose a little of our own.
-          </h2>
-          <div className="mt-10 flex max-w-2xl items-start gap-5">
-            <IconSlot />
-            <p className="text-lg leading-relaxed text-muted">
-              Reasoning, persuasion, reading a room — these are muscles, and they atrophy when
-              they go unused. Talking games are the opposite of autopilot. Bluffing, deducing, and
-              defending yourself out loud force your brain to challenge itself again.
-            </p>
-          </div>
-        </div>
-
         {/* Beat 2 — the signal: it's already happening in tech */}
-        <div className="border-b border-[var(--hairline)] py-28 sm:py-36">
-          <Eyebrow>The signal</Eyebrow>
-          <h2 className="mt-7 max-w-3xl font-display text-[clamp(1.75rem,4vw,2.75rem)] font-semibold leading-tight">
-            Games like Mafia are blowing up across tech — AI against AI, tech CEO against tech CEO.
+        <div className="border-b border-[var(--hairline)] py-28 text-center sm:py-36">
+          <h2 className="font-display text-[clamp(1rem,3vw,2.25rem)] font-semibold leading-tight whitespace-nowrap">
+            Games like Mafia are blowing up across tech
+            <br />
+            AI against AI, tech CEO against tech CEO
           </h2>
-          <div className="mt-14 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-14 grid gap-4 sm:grid-cols-2">
             {VIDEOS.map((v) => (
-              <VideoEmbed key={v.id} label={v.label} src={v.src} />
+              <VideoEmbed key={v.id} src={v.src} title={v.label} />
             ))}
           </div>
         </div>
@@ -134,68 +103,75 @@ export default function Landing() {
         </div>
 
         {/* Beat 4 — the answer: so we made it */}
-        <div className="border-t border-[var(--hairline)] py-28 sm:py-36">
-          <Eyebrow>So we made it</Eyebrow>
-          <h2 className="mt-7 max-w-4xl font-display text-[clamp(2rem,5.5vw,3.75rem)] font-bold leading-[1.04]">
-            A talking game you play <span className="text-ai">against real AI.</span>
-          </h2>
-          <p className="mt-8 max-w-2xl text-lg leading-relaxed text-muted">
-            You talk. They talk back. You bluff, accuse, defend, and vote — out loud, in real time,
-            against frontier models that read how you play. No scripts, no menus. Just you and your
-            wits versus the machines.
+        <div className="border-t border-[var(--hairline)] py-28 text-center sm:py-36">
+          <p className="mx-auto max-w-5xl font-display text-[clamp(3rem,8vw,5.5rem)] font-semibold leading-tight text-white">
+            <span
+              style={{
+                backgroundImage:
+                  "linear-gradient(to right, var(--human-2), var(--human-1) 35%, var(--text) 85%)",
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+              }}
+            >
+              You
+            </span>{" "}
+            play against{" "}
+            <span
+              style={{
+                backgroundImage:
+                  "linear-gradient(to left, var(--ai-1), var(--ai-2) 35%, var(--text) 85%)",
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+              }}
+            >
+              AI
+            </span>
+            .
           </p>
-
-          <div className="mt-14 grid gap-x-8 gap-y-10 sm:grid-cols-2">
-            <div className="flex items-start gap-5">
-              <IconSlot />
-              <div>
-                <h3 className="font-display text-xl font-medium">Pick a game, take a seat.</h3>
-                <p className="mt-2 leading-relaxed text-muted">
-                  Jump into a live table and start talking. Your voice goes straight into the round.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-start gap-5">
-              <IconSlot />
-              <div>
-                <h3 className="font-display text-xl font-medium">Outtalk the models.</h3>
-                <p className="mt-2 leading-relaxed text-muted">
-                  Persuade, deceive, and deduce your way to the last seat standing.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-start gap-5">
-              <IconSlot />
-              <div>
-                <h3 className="font-display text-xl font-medium">Endless game concepts.</h3>
-                <p className="mt-2 leading-relaxed text-muted">
-                  Mafia, debate, negotiation, interrogation — any game where talking and reading
-                  people decides who wins.
-                </p>
-              </div>
-            </div>
-            <div className="flex items-start gap-5">
-              <IconSlot />
-              <div>
-                <h3 className="font-display text-xl font-medium">Your brain, switched on.</h3>
-                <p className="mt-2 leading-relaxed text-muted">
-                  Every round is a rep. The more you play, the sharper you think.
-                </p>
-              </div>
-            </div>
+          <div className="marquee-mask mt-16 overflow-hidden">
+            <ul className="marquee-track gap-6">
+              {[...CARDS, ...CARDS].map((c, i) => (
+                <li
+                  key={i}
+                  aria-hidden={i >= CARDS.length}
+                  className="w-[min(82vw,22rem)] shrink-0"
+                >
+                  <article className="relative flex h-full flex-col items-center justify-center overflow-hidden rounded-2xl border border-[var(--hairline)] bg-black p-8 text-center">
+                    <div
+                      aria-hidden
+                      className="card-grad card-grad-left"
+                      style={{ backgroundImage: "url(/human-gradient.png)" }}
+                    />
+                    <div
+                      aria-hidden
+                      className="card-grad card-grad-right"
+                      style={{ backgroundImage: "url(/ai-gradient.png)" }}
+                    />
+                    <h3 className="relative font-display text-2xl font-bold text-white">
+                      {c.title}
+                    </h3>
+                    <p className="relative mt-3 text-sm leading-relaxed text-white/80">{c.body}</p>
+                  </article>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
       </section>
 
       {/* ── FINAL CTA ─────────────────────────────────────────── */}
-      <section className="relative border-t border-[var(--hairline)]">
+      <section className="relative overflow-hidden border-t border-[var(--hairline)] bg-black">
         <div
-          className="pointer-events-none absolute inset-0"
           aria-hidden
-          style={{
-            background:
-              "radial-gradient(ellipse 50% 80% at 50% 100%, rgba(177,76,255,0.18), transparent 70%)",
-          }}
+          className="side-grad side-grad-left pointer-events-none"
+          style={{ backgroundImage: "url(/human-gradient.png)" }}
+        />
+        <div
+          aria-hidden
+          className="side-grad side-grad-right pointer-events-none"
+          style={{ backgroundImage: "url(/ai-gradient.png)" }}
         />
         <div className="relative mx-auto w-full max-w-3xl px-5 py-28 text-center sm:px-8">
           <h2 className="font-display text-4xl font-bold leading-tight sm:text-6xl">

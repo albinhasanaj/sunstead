@@ -33,8 +33,6 @@ const mockTurn: TurnFn = async (def, state, agent, emit) => {
   const has = (n: string) => tools.find((t) => t.name === n);
   if (has('mafia_propose_kill') && town.length) {
     await has('mafia_propose_kill')!.execute({ target: pick(town).name, reason: 'soft target' }, ctx);
-  } else if (has('mafia_discuss')) {
-    await has('mafia_discuss')!.execute({ message: 'Let us hit a quiet one tonight.' }, ctx);
   } else if (has('vote') && alive.length) {
     await has('vote')!.execute({ target: pick(alive).name }, ctx);
   } else if (has('accuse') && alive.length) {

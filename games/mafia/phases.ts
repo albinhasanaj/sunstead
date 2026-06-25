@@ -68,13 +68,13 @@ const nameOf = (s: GameState, id: PlayerId) => s.players.find((p) => p.id === id
 export function turnOrder(state: GameState): PlayerId[] {
   switch (state.phase) {
     case PHASE.NIGHT: {
+      // The night is silent: each Mafia takes ONE turn to lock in a kill (no chat),
+      // then the special roles act. There are no discussion passes.
       const mafia = aliveMafia(state);
-      // 2 passes of night chat when the Mafia is a team; 1 when it's a lone wolf.
-      const chat = mafia.length > 1 ? [...mafia, ...mafia] : mafia;
       const specials = alive(state).filter(
         (p) => p.role === ROLE.DETECTIVE || p.role === ROLE.DOCTOR,
       );
-      return [...chat, ...specials].map((p) => p.id);
+      return [...mafia, ...specials].map((p) => p.id);
     }
     case PHASE.DISCUSSION: {
       const order: PlayerId[] = [];
@@ -106,7 +106,6 @@ export async function advancePhase(state: GameState, emit: Emit): Promise<void> 
       state.meta.killProposals = {};
       state.meta.nightKill = null;
       state.meta.protect = null;
-      state.meta.mafiaChat = [];
       break;
   }
 }
