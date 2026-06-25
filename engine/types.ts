@@ -57,9 +57,13 @@ export interface GameDefinition {
   renderContext?: (state: GameState, agent: AgentState) => string;
   // The model string for agent decisions, routed via the AI Gateway.
   model?: string;
+  // If a seat's own model fails (e.g. rate-limited), retry the turn once on this
+  // model so the game never stalls on a single provider hiccup.
+  fallbackModel?: string;
 }
 
 export type GameEvent =
+  | { type: 'setup'; players: { id: PlayerId; name: string; role: string; model?: string }[]; phase: string; round: number }
   | { type: 'phase'; phase: string; round: number }
   | { type: 'beliefs'; agent: PlayerId; suspicions: Record<PlayerId, number>; reasoning: string }
   | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string }

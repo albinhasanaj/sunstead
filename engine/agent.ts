@@ -36,9 +36,13 @@ export async function takeTurn(
 
   const context = (def.renderContext ?? defaultRenderContext)(state, agent);
 
-  try {
-    await generateText({
-      model: def.model ?? DEFAULT_MODEL, // routed via AI Gateway (AI_GATEWAY_API_KEY)
+  // Each seat can run on its own model (any AI Gateway string); fall back to the
+  // game-wide model, then the engine default.
+  const model = (agent.private.model as string) ?? def.model ?? DEFAULT_MODEL;
+
+  const run = (m: string) =>
+    generateText({
+      model: m, // routed via AI Gateway (AI_GATEWAY_API_KEY)
       system: def.systemPrompt(state, agent),
       prompt: context,
       tools,
@@ -47,7 +51,22 @@ export async function takeTurn(
       toolChoice: 'required',
       stopWhen: [stepCountIs(2)],
     });
+
+  try {
+    await run(model);
   } catch (err) {
+    // A single provider hiccup (rate limit, gated model) shouldn't stall the table.
+    // Retry once on the fallback model so the seat still gets to act this turn.
+    if (def.fallbackModel && def.fallbackModel !== model) {
+      try {
+        console.error(`[agent ${agent.name}] ${model} failed → retrying on ${def.fallbackModel}`);
+        await run(def.fallbackModel);
+        return;
+      } catch (err2) {
+        console.error(`[agent ${agent.name}] fallback also failed:`, (err2 as Error).message);
+        return;
+      }
+    }
     console.error(`[agent ${agent.name}] turn failed:`, (err as Error).message);
   }
 }

@@ -38,8 +38,24 @@ Every tool's `legalIn` enforces phase + role, so a Villager calling
 
 - **Next.js (App Router) + TypeScript**
 - **Vercel AI SDK (`ai`) via AI Gateway** — one `AI_GATEWAY_API_KEY`, models as
-  `creator/model` strings (default `anthropic/claude-sonnet-4.6`), swappable in one place.
+  `creator/model` strings. **One model per seat**: each AI-named character runs on
+  that lab's actual model (`GPT→openai/gpt-oss-120b`, `Claude→anthropic/claude-haiku-4.5`,
+  `Gemini→google/gemini-2.5-flash`, `DeepSeek→deepseek/deepseek-v3.1`, `Qwen→alibaba/qwen3-32b`, …).
+  Any gateway model works — `roles.ts` is just the default catalog.
 - ElevenLabs for voice (Phase 4+), SSE for realtime transport (Phase 2+).
+
+### Models & the free tier
+
+On the AI Gateway **free tier** only some providers are reachable and they
+rate-limit hard, so a full game can stall. Knobs:
+
+- `MAFIA_MODEL=anthropic/claude-haiku-4.5` — force every seat onto one reliable model.
+- `MAFIA_TURN_DELAY_MS=3500` — space turns to respect per-minute limits.
+- `GameDefinition.fallbackModel` retries a failed turn once on a backup model.
+
+Verified clean full game:
+`MAFIA_MODEL=anthropic/claude-haiku-4.5 MAFIA_TURN_DELAY_MS=3500 pnpm play`.
+With paid credits, drop the env overrides and each seat runs its own real model.
 
 ## Run it
 
@@ -53,18 +69,33 @@ pnpm play                          # or: pnpm play GPT Claude Grok Gemini Llama
 # Engine smoke test — no API key, no tokens (mock agents drive the real loop):
 pnpm tsx scripts/simulate.ts
 
+# The web app (watch OR play):
+MAFIA_MODEL=anthropic/claude-haiku-4.5 MAFIA_TURN_DELAY_MS=3000 pnpm dev
+#   open http://localhost:3000 →  "Watch" (spectate all minds)  or  "Join game" (play a seat)
+
 pnpm typecheck
 ```
 
+## Watch vs Play
+
+- **Watch** — every seat is an AI; god view: all roles, live suspicion bars, the
+  Mafia's private night channel. This is the "watch them scheme" mode.
+- **Join game** — you take one of the seats with a random role (you might be Mafia).
+  Fog of war: other roles, AI private reasoning, and the Mafia channel are hidden
+  (unless you're Mafia). You act by typing — the server loop pauses on your turn and
+  resumes when you submit (`POST /api/game/action`). Voice-in replaces typing in Phase 6.
+
 ## Build status
 
-- [x] **Phase 1 — the brain, text only.** Engine + Mafia module + `takeTurn`. A full
-      game plays to a winner; agents record private beliefs and act. Orchestration
-      verified end-to-end via `scripts/simulate.ts` (mock policy, no LLM). Live play
-      needs `AI_GATEWAY_API_KEY`.
-- [ ] Phase 2 — structured events over SSE (`app/api/game/route.ts`).
-- [ ] Phase 3 — UI: table view + minds panel.
+- [x] **Phase 1 — the brain, text only.** Engine + Mafia module + `takeTurn`. Full
+      game to a winner; agents record private beliefs and act. Verified via
+      `scripts/simulate.ts` (mock, no LLM) and live play with real deception.
+- [x] **Phase 2 — structured events over SSE** (`app/api/game/route.ts`).
+- [x] **Phase 3 — UI**: table view + transcript + minds panel (deliberately simple;
+      a 3D UI replaces it later).
+- [x] **Human-in-the-loop**: watch or play a seat via text, with fair fog of war
+      (`engine/human.ts`, `app/api/game/action`, `lib/gameSessions.ts`).
 - [ ] Phase 4 — ElevenLabs TTS on `speak`.
 - [ ] Phase 5 — music + SFX.
-- [ ] Phase 6 — human voice-in via Scribe.
+- [ ] Phase 6 — human voice-in via Scribe (swap text input for mic).
 - [ ] Phase 7 — Detective / Doctor roles (tools + resolution already stubbed in).

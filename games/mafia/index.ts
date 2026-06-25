@@ -1,5 +1,5 @@
 import type { AgentState, GameDefinition, GameState } from '../../engine/types';
-import { PERSONALITIES, roleDistribution } from './roles';
+import { DEFAULT_ROSTER, FALLBACK_MODEL, personalityByName, roleDistribution } from './roles';
 import { PHASE, PHASES, turnOrder, advancePhase } from './phases';
 import { toolsFor } from './tools';
 import { winner } from './winCondition';
@@ -15,20 +15,30 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 function setup(playerNames: string[]): GameState {
-  // Use provided names, else fall back to the model-themed personalities.
-  const n = Math.max(playerNames.length, 4);
-  const personalities = playerNames.length
-    ? playerNames.map((name, i) => ({ name, trait: PERSONALITIES[i % PERSONALITIES.length].trait }))
-    : shuffle(PERSONALITIES).slice(0, n);
+  // Names → seats. Each known character carries its own model + trait; an unknown
+  // custom name falls back to the default model and a neutral trait. With no names,
+  // use the default roster (the seats reachable on the free tier today).
+  const names = playerNames.length ? playerNames : DEFAULT_ROSTER;
+  // MAFIA_MODEL forces every seat onto one model — handy on the free tier where
+  // only some providers are reachable. Otherwise each seat keeps its own model.
+  const forced = process.env.MAFIA_MODEL;
+  const seats = names.map((name) => {
+    const known = personalityByName(name);
+    return {
+      name,
+      model: forced || known?.model || FALLBACK_MODEL,
+      trait: known?.trait ?? 'a sharp, observant player who keeps their cards close.',
+    };
+  });
 
-  const roles = shuffle(roleDistribution(personalities.length));
+  const roles = shuffle(roleDistribution(seats.length));
 
-  const players: AgentState[] = personalities.map((p, i) => ({
+  const players: AgentState[] = seats.map((p, i) => ({
     id: `p${i + 1}`,
     name: p.name,
     alive: true,
     role: roles[i],
-    private: { trait: p.trait, suspicions: {}, notes: '' },
+    private: { model: p.model, trait: p.trait, suspicions: {}, notes: '' },
   }));
 
   return {
@@ -51,7 +61,10 @@ export const mafiaGame: GameDefinition = {
   winner,
   systemPrompt,
   renderContext,
-  model: process.env.MAFIA_MODEL || 'anthropic/claude-sonnet-4.6',
+  // Per-seat models come from each personality; this is only the fallback for a
+  // seat with no model of its own. A game-wide override is still possible via env.
+  model: process.env.MAFIA_MODEL || FALLBACK_MODEL,
+  fallbackModel: FALLBACK_MODEL,
 };
 
 export default mafiaGame;

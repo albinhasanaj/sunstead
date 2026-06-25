@@ -21,9 +21,11 @@ export async function runGame(
   emit: Emit,
   onState?: (state: GameState) => void, // called once after setup (lets sinks bind to state)
   turnFn: TurnFn = takeTurn,
+  turnDelayMs = 0, // optional spacing between turns to respect provider rate limits
 ): Promise<string> {
   const state = def.setup(names);
   onState?.(state);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   // Safety bound so a misbehaving game can never loop forever.
   let guard = 0;
@@ -36,6 +38,7 @@ export async function runGame(
       await turnFn(def, state, agent, emit);
       // A turn may have ended the game (e.g. last villager voted out mid-tally).
       if (def.winner(state) !== null) break;
+      if (turnDelayMs) await sleep(turnDelayMs);
     }
 
     if (def.winner(state) !== null) break;

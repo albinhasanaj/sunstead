@@ -22,16 +22,20 @@ async function main() {
 
   const names = process.argv.slice(2);
   console.log(
-    `\n🎭  Agentic Mafia — text-only run  (${names.length || 5} players, model: ${mafiaGame.model})`,
+    `\n🎭  Agentic Mafia — text-only run  (${names.length || 5} players, one model per seat)`,
   );
 
+  const turnDelayMs = Number(process.env.MAFIA_TURN_DELAY_MS ?? 0);
   const bus = new EventBus();
   const winner = await runGame(mafiaGame, names, bus.emit, (state) => {
     // Bind the terminal renderer now that players (and their names) exist.
     bus.on(terminalRenderer(state));
-    const roster = state.players.map((p) => `${p.name} [${p.role}]`).join(', ');
-    console.log(`Secret roster (you wouldn't normally see this): ${roster}\n`);
-  });
+    console.log('Secret roster (you wouldn\'t normally see this):');
+    for (const p of state.players) {
+      console.log(`  ${p.name.padEnd(10)} ${String(p.role).padEnd(9)} ${p.private.model}`);
+    }
+    console.log('');
+  }, undefined, turnDelayMs);
 
   console.log(`Final result: ${winner.toUpperCase()} wins.\n`);
 }
