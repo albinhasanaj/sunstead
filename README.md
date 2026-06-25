@@ -53,6 +53,12 @@ rate-limit hard, so a full game can stall. Knobs:
 - `MAFIA_TURN_DELAY_MS=3500` — space turns to respect per-minute limits.
 - `GameDefinition.fallbackModel` retries a failed turn once on a backup model.
 
+In **play** mode, when you hold the discussion floor but stay quiet, the most
+eager AI jumps in so the table never goes dead — "speaking pressure":
+
+- `MAFIA_IDLE_MS=18000` — how long your silence lasts before an AI fills it.
+- `MAFIA_IDLE_MAX=3` — fill-ins before your turn auto-passes (you can speak any time).
+
 Verified clean full game:
 `MAFIA_MODEL=anthropic/claude-haiku-4.5 MAFIA_TURN_DELAY_MS=3500 pnpm play`.
 With paid credits, drop the env overrides and each seat runs its own real model.

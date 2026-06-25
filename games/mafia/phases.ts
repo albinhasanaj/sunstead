@@ -19,7 +19,7 @@ const DISCUSSION_ROUNDS = 2;
 export function nextSpeaker(state: GameState): PlayerId | null {
   if (state.phase !== PHASE.DISCUSSION) return null;
   const living = alive(state);
-  const meta = state.meta as any;
+  const meta = state.meta; // Record<string, any> — per-discussion scratch lives here
 
   // Per-discussion state, re-initialised each round (discussion runs once/round).
   if (!meta.disc || meta.disc.round !== state.round) {
@@ -44,15 +44,53 @@ export function nextSpeaker(state: GameState): PlayerId | null {
   let bestScore = -Infinity;
   for (const p of living) {
     if (p.id === d.last) continue; // never speak twice in a row
-    let s = 0.1 + Math.random() * 0.15;
-    s += 0.25 * Math.max(0, 2 - (d.spoke[p.id] ?? 0)); // pull in quieter players
-    // addressed/named by someone else in the last couple of lines → wants to reply
-    if (recent.some((l) => l.speaker !== p.id && l.text.toLowerCase().includes(p.name.toLowerCase()))) s += 0.6;
+    let s = eagerness(p, recent, d.spoke);
     if (p.private.human) s += 0.5; // make sure a human is regularly offered the floor
     if (s > bestScore) { bestScore = s; bestId = p.id; }
   }
   if (bestId) {
     d.beat += 1;
+    d.spoke[bestId] = (d.spoke[bestId] ?? 0) + 1;
+    d.last = bestId;
+  }
+  return bestId;
+}
+
+// A living player's base "urge to speak" right now: a little jitter, a pull toward
+// seats who've been quiet, and a strong bump if they were just named in the last
+// couple of lines (they'll want to reply). Shared by nextSpeaker (whose turn is it)
+// and mostEagerSpeaker (which AI fills a human's silence). No human bump here —
+// callers add that themselves only where offering the human the floor makes sense.
+function eagerness(p: AgentState, recent: { speaker: PlayerId; text: string }[], spoke: Record<PlayerId, number>): number {
+  let s = 0.1 + Math.random() * 0.15;
+  s += 0.25 * Math.max(0, 2 - (spoke[p.id] ?? 0)); // pull in quieter players
+  if (recent.some((l) => l.speaker !== p.id && l.text.toLowerCase().includes(p.name.toLowerCase()))) s += 0.6;
+  return s;
+}
+
+// Idle "speaking pressure": when the human holds the DISCUSSION floor but has gone
+// quiet, this picks the AI most eager to break the silence so the table never
+// freezes. Excludes the human, the seat that just spoke, and any ids passed in;
+// never picks a non-AI. It commits the pick to the per-discussion state (so the
+// speaker counts as having talked and won't immediately repeat) but does NOT spend
+// the round's speaking budget — these are bonus lines filling idle time, not beats.
+// Returns null if no AI is available to step in.
+export function mostEagerSpeaker(state: GameState, excludeIds: PlayerId[] = []): PlayerId | null {
+  if (state.phase !== PHASE.DISCUSSION) return null;
+  const d = state.meta.disc; // per-discussion state seeded by nextSpeaker
+  if (!d) return null;
+  const spoke: Record<PlayerId, number> = d.spoke ?? {};
+  const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2);
+  const exclude = new Set<PlayerId>([...excludeIds, ...(d.last ? [d.last as PlayerId] : [])]);
+
+  let bestId: PlayerId | null = null;
+  let bestScore = -Infinity;
+  for (const p of alive(state)) {
+    if (p.private.human || exclude.has(p.id)) continue; // AIs only; never repeat the last speaker
+    const s = eagerness(p, recent, spoke);
+    if (s > bestScore) { bestScore = s; bestId = p.id; }
+  }
+  if (bestId) {
     d.spoke[bestId] = (d.spoke[bestId] ?? 0) + 1;
     d.last = bestId;
   }

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVoiceQueue } from './useVoiceQueue';
 import { usePushToTalk } from './usePushToTalk';
 import TribunalScene, { PlayerFace } from './TribunalScene';
+import { useAuth } from '../../_components/AuthProvider';
 
 // ── shapes mirrored from engine/types GameEvent (kept loose on the client) ──────
 type Player = { id: string; name: string; role: string; model?: string | null; alive: boolean; human?: boolean };
@@ -42,6 +43,7 @@ const ROLE_STYLE: Record<string, string> = {
 };
 
 export default function Home() {
+  const { profile } = useAuth();
   const [players, setPlayers] = useState<Player[]>([]);
   const [feed, setFeed] = useState<Feed[]>([]);
   const [phase, setPhase] = useState<{ phase: string; round: number } | null>(null);
@@ -65,7 +67,9 @@ export default function Home() {
   const flushSpeakRef = useRef<() => void>(() => {});
   // Which seat is mid-LLM (deliberating) right now — drives a "thinking…" cue so
   // the slow AI turns (LLM + memory recall) never feel like a frozen screen.
-  const [thinkingId, setThinkingId] = useState<string | null>(null);
+  // Seats currently mid-LLM (deliberating). A set, since at night several agents
+  // think at once — each gets its own overhead bubble in the scene.
+  const [thinkingIds, setThinkingIds] = useState<string[]>([]);
   const [showLog, setShowLog] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
   // Drives the menu→gameplay transition overlay ('play' = role reveal, 'watch' = cinematic).
@@ -196,7 +200,7 @@ export default function Home() {
           pumpRef.current();
           break;
         case 'thinking':
-          setThinkingId((cur) => (e.on ? e.agent : cur === e.agent ? null : cur));
+          setThinkingIds((cur) => (e.on ? (cur.includes(e.agent) ? cur : [...cur, e.agent]) : cur.filter((id) => id !== e.agent)));
           break;
         case 'wake':
           // A night role just started acting — narrate it now (anonymous: role only).
@@ -255,6 +259,12 @@ export default function Home() {
           }
           break;
         }
+        case 'turn_over':
+          // The server passed our idle discussion turn (an eager AI filled the
+          // silence instead). Clear it so the bar shows "the table is talking"
+          // rather than a stale "your turn" — we'll be offered the floor again later.
+          setTurn((t) => (t && t.agent === e.agent ? null : t));
+          break;
         case 'win':
           flushSpeakRef.current();
           setWinner(e.winner);
@@ -285,7 +295,7 @@ export default function Home() {
       setTurn(null);
       setSelected(null);
       setSpeakingId(null);
-      setThinkingId(null);
+      setThinkingIds([]);
       setNightWake(null);
       speakQueue.current = [];
       speakActive.current = false;
@@ -315,7 +325,11 @@ export default function Home() {
         const res = await fetch('/api/game', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: m, ...(devRoleArg ? { devRole: devRoleArg } : {}) }),
+          body: JSON.stringify({
+            mode: m,
+            ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),
+            ...(devRoleArg ? { devRole: devRoleArg } : {}),
+          }),
           signal: ac.signal,
         });
         if (!res.body) throw new Error('no stream');
@@ -340,7 +354,7 @@ export default function Home() {
         setRunning(false);
       }
     },
-    [handle, voice],
+    [handle, voice, profile],
   );
 
   const submitAction = useCallback(
@@ -412,6 +426,24 @@ export default function Home() {
   // The night is silent — no whisper bar. Discussion is the only free-text phase.
   const showBar = inDiscussion;
 
+  // Directed public statement: if you've clicked an agent during discussion, your
+  // spoken line is addressed to them (prefixed with their name) — still a normal,
+  // table-visible DISCUSSION speak, not a private channel.
+  const addresseeId = inDiscussion && selected && selected !== humanId ? selected : null;
+  const addresseeName = addresseeId ? nameOf(addresseeId) : null;
+  const sendSpeech = useCallback(
+    (raw: string) => {
+      const text = (raw ?? '').trim();
+      if (!text) return;
+      const directed =
+        addresseeName && !text.toLowerCase().startsWith(addresseeName.toLowerCase())
+          ? `${addresseeName}, ${text}`
+          : text;
+      submitAction('speak', { text: directed });
+    },
+    [addresseeName, submitAction],
+  );
+
   // Mafia private channel — your allies + the targets they've silently picked.
   const showMafiaChannel = mode === 'play' && myRole === 'mafia' && phase?.phase === 'NIGHT' && !!me?.alive;
   // target id → names of the Mafia who voted to kill them (for obvious scene markers)
@@ -436,9 +468,13 @@ export default function Home() {
   const captionWho = speakingId ?? lastSpeak?.who ?? null;
 
   // "thinking…" cue (hidden while someone is speaking). At night the wake narrator
-  // is the indicator instead, so we suppress this there.
+  // is the indicator instead, so we suppress this here. A set, since several agents
+  // can deliberate at once — we surface the first that isn't the current speaker.
+  const firstThinking = thinkingIds.find((id) => id !== speakingId) ?? null;
   const thinkingLabel =
-    thinkingId && !speakingId && running && !winner && phase?.phase !== 'NIGHT' ? `${nameOf(thinkingId)} is deliberating…` : null;
+    firstThinking && !speakingId && running && !winner && phase?.phase !== 'NIGHT'
+      ? `${nameOf(firstThinking)} is deliberating…`
+      : null;
 
   // ── phase timers (generous; the timer never rushes you) ─────────────────────
   // On your turn it auto-passes if you idle past the clock; during discussion an
@@ -513,6 +549,8 @@ export default function Home() {
           teammates={teammates}
           protectedId={protectedId}
           killVotes={killVotes}
+          thinkingIds={mode === 'play' && phase?.phase === 'NIGHT' ? [] : thinkingIds}
+          addresseeId={inDiscussion ? selected : null}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />
@@ -525,21 +563,18 @@ export default function Home() {
         </div>
       )}
 
-      {/* floating controls — top-right cluster, all styled like the Transcript button.
-          Sits above the drawers (z-50) so each button always toggles its panel. */}
+      {/* floating controls — top-right cluster. Leave-game is primary; the table
+          and transcript drawers sit beside it. Mute lives in the bottom voice dock. */}
       <div className="absolute right-3 top-3 z-50 flex items-center gap-2">
-        <Link href="/explore" title="Back to the lobby" className={FLOAT_BTN}>
-          ← Lobby
-        </Link>
         <button onClick={() => setShowPlayers((v) => !v)} title="The table" className={FLOAT_BTN}>
           👥 Players
         </button>
         <button onClick={() => setShowLog((v) => !v)} title="Full transcript" className={FLOAT_BTN}>
           📜 Transcript
         </button>
-        <button onClick={() => setVoiceOn((v) => !v)} title={voiceOn ? 'Mute voices' : 'Enable voices'} className={FLOAT_BTN}>
-          {voiceOn ? '🔊' : '🔇'}
-        </button>
+        <Link href="/explore" title="Leave the game" className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}>
+          ⏻ Leave game
+        </Link>
       </div>
 
       {/* phase countdown — generous; just a pacing indicator + skip target */}
@@ -700,7 +735,7 @@ export default function Home() {
           Click it (while visible) to open the full transcript. */}
       <div
         className={`absolute left-1/2 z-20 w-[min(680px,calc(100%-2rem))] -translate-x-1/2 transition-all duration-500 ${
-          showBar ? 'bottom-28' : 'bottom-4'
+          showBar || (mode === 'play' && !!me?.alive) ? 'bottom-40' : 'bottom-4'
         } ${captionVisible && captionWho ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
       >
         {captionWho && (
@@ -749,17 +784,27 @@ export default function Home() {
         </div>
       )}
 
-      {/* free-text action bar — DISCUSSION speech only (always visible during the
-          phase, enabled on your turn). The night is silent: no whisper bar. */}
-      {showBar && (
-        <div className="absolute inset-x-0 bottom-0 z-30">
-          <ActionBar
-            phase="DISCUSSION"
-            turn={discussionTurn}
-            players={players}
-            onSubmit={submitAction}
-          />
-        </div>
+      {/* bottom-center voice dock — the game's primary control. Mic is the main
+          input (hold to speak your move); a text toggle covers when you can't talk,
+          and the mute button + the animated orb live here too. */}
+      {running && !winner && mode === 'play' && !!me?.alive && (
+        <VoiceDock
+          voiceOn={voiceOn}
+          onToggleVoice={() => setVoiceOn((v) => !v)}
+          active={!!discussionTurn}
+          phaseLabel={
+            inDiscussion
+              ? 'the table is talking…'
+              : phase?.phase === 'NIGHT'
+                ? 'the night is silent'
+                : phase?.phase === 'VOTE'
+                  ? 'the table is voting…'
+                  : ''
+          }
+          speaking={!!speakingId}
+          addresseeName={addresseeName}
+          onSend={sendSpeech}
+        />
       )}
 
       {/* left drawer — the table (toggled by the Players button) */}
@@ -1041,121 +1086,177 @@ function IntroOverlay({ mode, role, onDone }: { mode: 'play' | 'watch'; role: st
   );
 }
 
-function ActionBar({
-  phase,
-  turn,
-  players,
-  onSubmit,
+// ── Bottom-center voice dock ─────────────────────────────────────────────────
+// The game's primary control surface. Voice-first: hold the mic to speak your
+// move (push-to-talk → STT → sent as a DISCUSSION line). A text toggle reveals a
+// keyboard fallback, the mute button rides alongside, and the animated orb pulses
+// while you're recording or while the table is voicing a line.
+function VoiceDock({
+  voiceOn,
+  onToggleVoice,
+  active,
+  phaseLabel,
+  speaking,
+  addresseeName,
+  onSend,
 }: {
-  phase: string;
-  turn: Turn | null; // non-null only when it's actually your turn
-  players: Player[];
-  onSubmit: (tool: string, args: any) => void;
+  voiceOn: boolean;
+  onToggleVoice: () => void;
+  active: boolean; // your discussion turn → mic/text enabled
+  phaseLabel: string; // hint shown when it isn't your turn
+  speaking: boolean; // table is voicing a line → animate the orb
+  addresseeName: string | null;
+  onSend: (text: string) => void;
 }) {
+  const [textMode, setTextMode] = useState(false);
   const [text, setText] = useState('');
-  const [target, setTarget] = useState('');
-  const [discussKind, setDiscussKind] = useState<'speak' | 'accuse' | 'defend'>('speak');
-  const ptt = usePushToTalk((t) => setText((prev) => (prev ? `${prev} ${t}` : t)));
+  const ptt = usePushToTalk((t) => {
+    const clean = t.trim();
+    if (!clean) return;
+    if (textMode) {
+      setText((prev) => (prev ? `${prev} ${clean}` : clean));
+    } else if (active) {
+      onSend(clean); // voice-first: speak it straight away
+    }
+  });
 
-  const myTurn = !!turn; // can you actually act right now?
-  // alive others for the accuse dropdown — from the turn payload, else the roster.
-  const alive = turn?.alive ?? players.filter((p) => p.alive && !p.human).map((p) => ({ id: p.id, name: p.name }));
+  const recording = ptt.status === 'recording';
+  const transcribing = ptt.status === 'transcribing';
+  const live = recording || transcribing || speaking;
+  const accent = recording ? '#f0586a' : active ? '#f0b54a' : '#8b93a8';
 
-  const Mic = () => (
-    <button
-      type="button"
-      disabled={!myTurn}
-      onMouseDown={ptt.start}
-      onMouseUp={ptt.stop}
-      onMouseLeave={() => ptt.status === 'recording' && ptt.stop()}
-      onTouchStart={(e) => {
-        e.preventDefault();
-        ptt.start();
-      }}
-      onTouchEnd={(e) => {
-        e.preventDefault();
-        ptt.stop();
-      }}
-      title={myTurn ? 'Hold to talk' : 'Wait for your turn'}
-      className={`rounded border px-3 py-1.5 text-sm transition disabled:opacity-40 ${
-        ptt.status === 'recording'
-          ? 'border-red-500 bg-red-500/20 text-red-300'
-          : ptt.status === 'transcribing'
-            ? 'border-amber-500/50 text-amber-300'
-            : 'border-neutral-700 hover:bg-neutral-800'
-      }`}
-    >
-      {ptt.status === 'recording' ? '● rec' : ptt.status === 'transcribing' ? '…' : '🎤'}
-    </button>
-  );
+  const sendText = () => {
+    if (!active) return;
+    const clean = text.trim();
+    if (!clean) return;
+    onSend(clean);
+    setText('');
+  };
 
   return (
-    <div className="border-t border-amber-500/30 bg-neutral-900/85 px-5 py-3 backdrop-blur">
-      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-400">
-        {myTurn ? (
-          <>
-            Your turn · {phase}
-            <span className="font-normal normal-case text-neutral-500">· hold 🎤 to speak your move</span>
-          </>
-        ) : (
-          <span className="text-neutral-500">
-            {phase} · <span className="text-amber-300/70">the table is talking…</span> compose your move — you’ll send it on your turn
-          </span>
-        )}
-      </div>
+    <div className="absolute bottom-5 left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-2.5">
+      <style>{`
+        @keyframes vdRing { 0% { transform: scale(.6); opacity:.55 } 100% { transform: scale(2.1); opacity:0 } }
+        @keyframes vdBar  { 0%,100% { transform: scaleY(.35) } 50% { transform: scaleY(1) } }
+      `}</style>
 
-      {phase === 'DISCUSSION' && (
-        <div className="flex flex-wrap items-end gap-2">
-          <select
-            value={discussKind}
-            onChange={(e) => setDiscussKind(e.target.value as any)}
-            className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm"
-          >
-            <option value="speak">Speak</option>
-            <option value="accuse">Accuse</option>
-            <option value="defend">Defend self</option>
-          </select>
-          {discussKind === 'accuse' && (
-            <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
-              <option value="">who?</option>
-              {alive.map((p) => (
-                <option key={p.id} value={p.name}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          )}
+      {/* keyboard fallback row (toggled) */}
+      {textMode && (
+        <div className="flex items-center gap-2 rounded-full border border-neutral-700/70 bg-neutral-950/85 px-2 py-1.5 backdrop-blur">
           <input
+            autoFocus
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={discussKind === 'accuse' ? 'why are they Mafia?' : 'say something…'}
-            className="min-w-[240px] flex-1 rounded border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm"
-            onKeyDown={(e) => e.key === 'Enter' && submitDiscussion()}
+            onKeyDown={(e) => e.key === 'Enter' && sendText()}
+            placeholder={active ? (addresseeName ? `say something to ${addresseeName}…` : 'say something…') : 'wait for your turn…'}
+            disabled={!active}
+            className="min-w-[240px] flex-1 rounded-full bg-transparent px-3 py-1 text-sm text-neutral-100 placeholder:text-neutral-600 focus:outline-none disabled:opacity-50"
           />
-          <Mic />
           <button
-            onClick={submitDiscussion}
-            disabled={!myTurn}
-            className="rounded bg-amber-500 px-4 py-1.5 text-sm font-semibold text-neutral-950 transition hover:bg-amber-400 disabled:cursor-default disabled:bg-neutral-700 disabled:text-neutral-400"
+            onClick={sendText}
+            disabled={!active || !text.trim()}
+            className="rounded-full bg-amber-500 px-4 py-1 text-sm font-semibold text-neutral-950 transition hover:bg-amber-400 disabled:bg-neutral-700 disabled:text-neutral-500"
           >
-            {myTurn ? 'Send' : 'Waiting…'}
+            Send
           </button>
         </div>
       )}
 
-      {/* VOTE and the night target-picks (kill / investigate / protect) are driven
-          by clicking a face in the 3D scene + its action buttons. The night is
-          silent — there is no whisper input. */}
+      {/* addressee chip — who your next line is aimed at */}
+      {addresseeName && active && (
+        <div className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-0.5 text-[11px] text-amber-200">
+          → speaking to <span className="font-semibold">{addresseeName}</span>
+        </div>
+      )}
+
+      {/* main control row: mute · mic orb · keyboard toggle */}
+      <div className="flex items-center gap-4">
+        <button
+          onClick={onToggleVoice}
+          title={voiceOn ? 'Mute voices' : 'Unmute voices'}
+          className={`flex h-11 w-11 items-center justify-center rounded-full border text-lg backdrop-blur transition ${
+            voiceOn ? 'border-neutral-700/70 bg-neutral-950/70 text-neutral-200 hover:bg-neutral-800/80' : 'border-red-500/40 bg-red-500/10 text-red-300'
+          }`}
+        >
+          {voiceOn ? '🔊' : '🔇'}
+        </button>
+
+        {/* the orb — hold to talk */}
+        <button
+          type="button"
+          disabled={!active}
+          onMouseDown={ptt.start}
+          onMouseUp={ptt.stop}
+          onMouseLeave={() => recording && ptt.stop()}
+          onTouchStart={(e) => {
+            e.preventDefault();
+            ptt.start();
+          }}
+          onTouchEnd={(e) => {
+            e.preventDefault();
+            ptt.stop();
+          }}
+          title={active ? 'Hold to speak your move' : 'Wait for your turn'}
+          className="relative flex h-20 w-20 items-center justify-center rounded-full transition disabled:cursor-default"
+          style={{
+            background: `radial-gradient(circle at 50% 35%, ${accent}33, ${accent}10 60%, transparent 70%)`,
+          }}
+        >
+          {/* expanding rings while live */}
+          {live &&
+            [0, 1, 2].map((n) => (
+              <span
+                key={n}
+                className="absolute inset-0 rounded-full border"
+                style={{ borderColor: accent, animation: `vdRing 1.6s ease-out ${n * 0.45}s infinite` }}
+              />
+            ))}
+          {/* core disc */}
+          <span
+            className="relative flex h-16 w-16 items-center justify-center rounded-full border text-2xl"
+            style={{
+              borderColor: accent,
+              background: recording ? 'rgba(240,88,106,0.18)' : 'rgba(8,10,16,0.8)',
+              boxShadow: live ? `0 0 26px ${accent}88` : `0 0 12px ${accent}44`,
+              color: accent,
+              opacity: active ? 1 : 0.5,
+            }}
+          >
+            {transcribing ? (
+              <span className="flex items-end gap-0.5">
+                {[0, 1, 2, 3].map((n) => (
+                  <span key={n} className="h-4 w-1 origin-bottom rounded bg-current" style={{ animation: `vdBar .7s ease ${n * 0.12}s infinite` }} />
+                ))}
+              </span>
+            ) : recording ? (
+              '●'
+            ) : (
+              '🎤'
+            )}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setTextMode((v) => !v)}
+          title={textMode ? 'Hide keyboard' : "Type instead (if you can't speak)"}
+          className={`flex h-11 w-11 items-center justify-center rounded-full border text-lg backdrop-blur transition ${
+            textMode ? 'border-amber-400/60 bg-amber-500/15 text-amber-200' : 'border-neutral-700/70 bg-neutral-950/70 text-neutral-200 hover:bg-neutral-800/80'
+          }`}
+        >
+          ⌨
+        </button>
+      </div>
+
+      {/* hint line */}
+      <div className="text-[11px] tracking-wide text-neutral-400">
+        {active ? (
+          <span className="text-amber-200/90">your turn — {recording ? 'release to send' : transcribing ? 'transcribing…' : 'hold the mic to speak'}</span>
+        ) : (
+          <span>{phaseLabel}</span>
+        )}
+      </div>
     </div>
   );
-
-  function submitDiscussion() {
-    if (!myTurn) return;
-    if (discussKind === 'speak' && text.trim()) onSubmit('speak', { text });
-    else if (discussKind === 'accuse' && target && text.trim()) onSubmit('accuse', { target, reason: text });
-    else if (discussKind === 'defend' && text.trim()) onSubmit('defend', { argument: text });
-    setText('');
-  }
 }
 
 function FeedLine({ it, nameOf }: { it: Feed; nameOf: (id: string) => string }) {
