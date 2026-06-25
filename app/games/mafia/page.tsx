@@ -77,6 +77,8 @@ export default function Home() {
   // Phase countdown + the "ready to move to vote" toggle.
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [wantsSkip, setWantsSkip] = useState(false);
+  // Dev-only: force your role for testing (empty = random). Sent to the API.
+  const [devRole, setDevRole] = useState('');
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -229,7 +231,7 @@ export default function Home() {
   );
 
   const start = useCallback(
-    async (m: 'watch' | 'play') => {
+    async (m: 'watch' | 'play', devRoleArg?: string) => {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
@@ -265,7 +267,7 @@ export default function Home() {
         const res = await fetch('/api/game', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ mode: m }),
+          body: JSON.stringify({ mode: m, ...(devRoleArg ? { devRole: devRoleArg } : {}) }),
           signal: ac.signal,
         });
         if (!res.body) throw new Error('no stream');
@@ -543,7 +545,7 @@ export default function Home() {
             <button
               onClick={() => {
                 setIntro('play');
-                start('play');
+                start('play', devRole);
               }}
               className="tribunal-action tribunal-action--join min-w-[240px] text-center"
             >
@@ -558,6 +560,22 @@ export default function Home() {
             >
               Watch the agents
             </button>
+            {process.env.NODE_ENV !== 'production' && (
+              <label className="mt-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+                dev role
+                <select
+                  value={devRole}
+                  onChange={(e) => setDevRole(e.target.value)}
+                  className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-[11px] normal-case tracking-normal text-neutral-300"
+                >
+                  <option value="">Random</option>
+                  <option value="mafia">Mafia</option>
+                  <option value="detective">Detective</option>
+                  <option value="doctor">Doctor</option>
+                  <option value="villager">Villager</option>
+                </select>
+              </label>
+            )}
           </div>
         </div>
       )}
