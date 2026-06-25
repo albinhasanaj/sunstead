@@ -39,6 +39,8 @@ export type Props = {
   teammates?: string[]; // mafia: your allies' ids
   protectedId?: string | null; // doctor: who you shielded
   killVotes?: Record<string, string[]>; // mafia: target id → names of who voted to kill them
+  thinkingIds?: string[]; // seats currently mid-LLM (deliberating) → overhead think bubble
+  addresseeId?: string | null; // who you've clicked to address your next line to
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -275,6 +277,48 @@ function makeTagTexture(text: string, color: string) {
   return tex;
 }
 
+// A soft "thinking" thought-bubble (rounded cloud + three dots), tinted to the
+// agent's brand colour. Billboarded over a seat while its model is deliberating,
+// so the slow LLM turns read as visible activity instead of a frozen table.
+function makeThinkBubbleTexture(color: string) {
+  const w = 256;
+  const h = 160;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = 'rgba(10,12,18,0.92)';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 22;
+  // main cloud
+  roundRect(ctx, 34, 18, w - 68, 84, 42);
+  ctx.fill();
+  ctx.stroke();
+  // two trailing tail puffs under the cloud
+  ctx.beginPath();
+  ctx.arc(w / 2 - 18, 120, 13, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(w / 2 + 6, 142, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  // three dots inside the cloud
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = color;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.arc(w / 2 - 44 + i * 44, 60, 13, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
 // A white targeting reticle (broken ring + corner ticks + centre dot), tinted at
 // runtime via the material colour. Billboarded over whoever you're about to pick.
 function makeReticleTexture() {
@@ -354,6 +398,7 @@ type Seat = {
   tag: THREE.Mesh | null;
   tagMat: THREE.MeshBasicMaterial | null;
   tagKey: string;
+  think: THREE.Mesh | null; // overhead "thinking…" bubble (shown while deliberating)
   baseColor: THREE.Color;
   alive: boolean;
   deathAnim: number; // 0 = upright, 1 = fully collapsed
@@ -636,7 +681,7 @@ export default function TribunalScene(props: Props) {
 
         if (human) {
           // You ARE the camera — no figure, just a seat record so others look at you.
-          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, head: null, skull: null, skinMat: null, bodyMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, head: null, skull: null, skinMat: null, bodyMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
           seats.push(seat);
           seatById.set(pl.id, seat);
           return;
@@ -692,9 +737,18 @@ export default function TribunalScene(props: Props) {
         tag.visible = false;
         grp.add(tag);
 
-        owned.push(bustGeo, bodyMat, skullGeo, skinMat, skin, nameTex, labelMat, labelGeo, ringGeo, ringMat, tagGeo, tagMat);
+        // overhead "thinking…" thought-bubble (shown only while this model is mid-LLM)
+        const thinkTex = makeThinkBubbleTexture(color);
+        const thinkMat = new THREE.MeshBasicMaterial({ map: thinkTex, transparent: true, depthWrite: false });
+        const thinkGeo = new THREE.PlaneGeometry(0.92, 0.575);
+        const think = new THREE.Mesh(thinkGeo, thinkMat);
+        think.position.set(0, 3.18, 0);
+        think.visible = false;
+        grp.add(think);
 
-        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, head, skull, skinMat, bodyMat, ring, label, tag, tagMat, tagKey: '', baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+        owned.push(bustGeo, bodyMat, skullGeo, skinMat, skin, nameTex, labelMat, labelGeo, ringGeo, ringMat, tagGeo, tagMat, thinkTex, thinkMat, thinkGeo);
+
+        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, head, skull, skinMat, bodyMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
         // a figure built already-dead (e.g. reconnect) starts collapsed, no replay
         if (!pl.alive) {
           const outward = new THREE.Vector3(x, 0, z).normalize();
@@ -996,6 +1050,22 @@ export default function TribunalScene(props: Props) {
             s.tag.rotation.y = Math.atan2(camera.position.x - s.pos.x, camera.position.z - s.pos.z);
             const pulse = 1 + Math.sin(t * 9) * 0.05;
             s.tag.scale.set(pulse, pulse, 1);
+          }
+        }
+
+        // overhead "thinking…" bubble — visible while this model is mid-LLM. Hidden
+        // once it starts speaking (the line itself is the payoff) or when it dies.
+        if (s.think) {
+          const wantThink = s.alive && !talking && (p.thinkingIds?.includes(s.id) ?? false);
+          if (wantThink !== s.think.visible) s.think.visible = wantThink;
+          if (wantThink) {
+            s.think.rotation.y = Math.atan2(camera.position.x - s.pos.x, camera.position.z - s.pos.z);
+            const bob = Math.sin(t * 16) * 0.04;
+            s.think.position.y = 3.18 + bob;
+            const pulse = 1 + Math.sin(t * 12) * 0.06;
+            s.think.scale.set(pulse, pulse, 1);
+            const tm = s.think.material as THREE.MeshBasicMaterial;
+            tm.opacity = 0.8 + Math.sin(t * 12) * 0.2;
           }
         }
       }

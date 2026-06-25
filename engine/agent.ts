@@ -48,9 +48,21 @@ export async function takeTurn(
   if (def.recallForTurn) {
     const t0 = Date.now();
     try {
-      const mem = await def.recallForTurn(state, agent);
+      // Memory must never STALL a turn. recall() makes networked calls (embedding
+      // + Aiven MCP pgvector read); if that backend is slow or hangs, the whole
+      // game freezes waiting on it. Time-box it so a sluggish memory backend just
+      // means this one turn proceeds memory-less instead of locking up the game.
+      const recallTimeoutMs = Number(process.env.MAFIA_RECALL_TIMEOUT_MS ?? 8000);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const mem = await Promise.race([
+        def.recallForTurn(state, agent),
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), recallTimeoutMs);
+        }),
+      ]);
+      clearTimeout(timer);
       if (mem) prompt = `${baseContext}\n\n${mem}`;
-      console.log(`[turn]   ${agent.name} · memory recall took ${Date.now() - t0}ms${mem ? '' : ' (no hits)'}`);
+      console.log(`[turn]   ${agent.name} · memory recall took ${Date.now() - t0}ms${mem ? '' : ' (no hits/timeout)'}`);
     } catch (err) {
       console.error(`[turn]   ${agent.name} · recall FAILED after ${Date.now() - t0}ms:`, (err as Error).message);
     }
