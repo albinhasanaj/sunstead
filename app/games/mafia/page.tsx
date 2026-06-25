@@ -67,8 +67,9 @@ export default function Home() {
   const [protectedId, setProtectedId] = useState<string | null>(null); // who you (doctor) shielded
   const [killVotesByAgent, setKillVotesByAgent] = useState<Record<string, string>>({}); // mafia agentId → target id, this night
   const announcedTeamRef = useRef(false);
-  // Big transient death/elimination announcement banner.
-  const [announce, setAnnounce] = useState<{ name: string; sub: string } | null>(null);
+  // Big transient announcement banner (death / doctor-save / quiet night).
+  type Announce = { eyebrow: string; title: string; face: string | null; tone: 'death' | 'save' | 'quiet' };
+  const [announce, setAnnounce] = useState<Announce | null>(null);
   const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Brief "night falls" hush played each time the table goes to sleep.
   const [nightFall, setNightFall] = useState(false);
@@ -92,10 +93,11 @@ export default function Home() {
     }
   }, []);
 
-  const showAnnounce = useCallback((name: string, sub: string) => {
-    setAnnounce({ name, sub });
+  const showAnnounce = useCallback((a: Announce) => {
+    setAnnounce(a);
     if (announceTimer.current) clearTimeout(announceTimer.current);
     announceTimer.current = setTimeout(() => setAnnounce(null), 4200);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -163,14 +165,25 @@ export default function Home() {
           // Hidden-role variant: mark them dead but keep their role secret.
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
           setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.` }]);
-          showAnnounce(nameOf(e.target), 'Killed in the night');
+          showAnnounce({ eyebrow: 'Killed in the night', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('death');
           break;
         case 'reveal':
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
           setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.` }]);
-          showAnnounce(nameOf(e.target), 'Voted out by the table');
+          showAnnounce({ eyebrow: 'Voted out by the table', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('reveal');
+          break;
+        case 'night':
+          // Anonymous night outcome — no names of who was targeted or who saved them.
+          if (e.outcome === 'saved') {
+            setFeed((f) => [...f, { k: 'system', text: '🛡 The Mafia struck — but the doctor saved their target. No one died.' }]);
+            showAnnounce({ eyebrow: "The doctor's work", title: 'A life was saved', face: null, tone: 'save' });
+            playSfx('reveal');
+          } else {
+            setFeed((f) => [...f, { k: 'system', text: '🌙 The night passed quietly — no one died.' }]);
+            showAnnounce({ eyebrow: 'Dawn breaks', title: 'A quiet night', face: null, tone: 'quiet' });
+          }
           break;
         case 'vote':
           setFeed((f) => [...f, { k: 'vote', who: e.agent, target: e.target }]);
@@ -570,16 +583,34 @@ export default function Home() {
         </div>
       )}
 
-      {/* dramatic death / elimination announcement */}
+      {/* dramatic outcome announcement: death (red), doctor-save (teal), quiet (slate) */}
       {announce && (
-        <div key={announce.name + announce.sub} className="pointer-events-none absolute inset-x-0 top-[20%] z-30 flex justify-center px-6">
-          <div className="death-banner flex flex-col items-center gap-3 rounded-2xl border border-red-500/30 bg-black/55 px-10 py-6 text-center shadow-2xl shadow-red-950/40 backdrop-blur-md">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.45em] text-red-300/80">{announce.sub}</span>
-            <span className="flex items-center gap-3 text-4xl font-bold tracking-tight text-red-50">
-              <PlayerFace name={announce.name} size={48} />
-              {announce.name}
+        <div key={announce.eyebrow + announce.title} className="pointer-events-none absolute inset-x-0 top-[20%] z-30 flex justify-center px-6">
+          <div
+            className={`death-banner flex flex-col items-center gap-3 rounded-2xl border px-10 py-6 text-center shadow-2xl backdrop-blur-md ${
+              announce.tone === 'death'
+                ? 'border-red-500/30 bg-black/55 shadow-red-950/40'
+                : announce.tone === 'save'
+                  ? 'border-teal-400/30 bg-black/55 shadow-teal-950/40'
+                  : 'border-neutral-500/25 bg-black/55 shadow-black/40'
+            }`}
+          >
+            <span
+              className={`text-[11px] font-semibold uppercase tracking-[0.45em] ${
+                announce.tone === 'death' ? 'text-red-300/80' : announce.tone === 'save' ? 'text-teal-300/80' : 'text-neutral-400'
+              }`}
+            >
+              {announce.eyebrow}
             </span>
-            <span className="text-xs uppercase tracking-[0.3em] text-neutral-400">is dead</span>
+            <span
+              className={`flex items-center gap-3 text-4xl font-bold tracking-tight ${
+                announce.tone === 'death' ? 'text-red-50' : announce.tone === 'save' ? 'text-teal-50' : 'text-neutral-100'
+              }`}
+            >
+              {announce.face && <PlayerFace name={announce.face} size={48} />}
+              {announce.title}
+            </span>
+            {announce.tone === 'death' && <span className="text-xs uppercase tracking-[0.3em] text-neutral-400">is dead</span>}
           </div>
           <style>{`
             @keyframes deathBannerIn {
