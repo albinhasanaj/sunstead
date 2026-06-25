@@ -61,6 +61,7 @@ export default function Home() {
   const [findings, setFindings] = useState<Record<string, 'mafia' | 'town'>>({}); // detective results
   const [teammates, setTeammates] = useState<string[]>([]); // your Mafia allies' ids
   const [protectedId, setProtectedId] = useState<string | null>(null); // who you (doctor) shielded
+  const [killVotesByAgent, setKillVotesByAgent] = useState<Record<string, string>>({}); // mafia agentId → target id, this night
   const announcedTeamRef = useRef(false);
 
   const voice = useVoiceQueue();
@@ -115,6 +116,7 @@ export default function Home() {
         case 'phase': {
           setPhase({ phase: e.phase, round: e.round });
           setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
+          setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
           const night = e.phase === 'NIGHT';
           if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
           if (night) playSfx('night');
@@ -145,6 +147,10 @@ export default function Home() {
           break;
         case 'vote':
           setFeed((f) => [...f, { k: 'vote', who: e.agent, target: e.target }]);
+          break;
+        case 'action':
+          // A Mafia teammate's kill proposal (only reaches you when you're Mafia).
+          if (e.kind === 'propose_kill' && e.target) setKillVotesByAgent((m) => ({ ...m, [e.agent]: e.target }));
           break;
         case 'knowledge':
           setFeed((f) => [...f, { k: 'knowledge', who: e.agent, text: e.text }]);
@@ -197,6 +203,7 @@ export default function Home() {
       setFindings({});
       setTeammates([]);
       setProtectedId(null);
+      setKillVotesByAgent({});
       announcedTeamRef.current = false;
       setMode(m);
       setRunning(true);
@@ -252,6 +259,8 @@ export default function Home() {
         setFeed((f) => [...f, { k: 'system', text: `🛡 You protected ${nameOf(args.target)} tonight.` }]);
       }
       if (tool === 'investigate') setFeed((f) => [...f, { k: 'system', text: `🔎 You investigated ${nameOf(args.target)}…` }]);
+      // Show your own kill vote immediately (the engine echoes it back too).
+      if (tool === 'mafia_propose_kill' && humanId && args.target) setKillVotesByAgent((m) => ({ ...m, [humanId]: args.target }));
       try {
         await fetch('/api/game/action', {
           method: 'POST',
@@ -262,16 +271,36 @@ export default function Home() {
         /* ignore */
       }
     },
-    [gameId, nameOf],
+    [gameId, nameOf, humanId],
   );
 
   const myTurn = turn && humanId && turn.agent === humanId ? turn : null;
   const me = humanId ? players.find((p) => p.id === humanId) : null;
   const myRole = me?.role ?? 'unknown';
-  // The scene's own overlay handles target-pick actions (vote / kill / investigate /
-  // protect). The ActionBar only needs to appear for free-text moves: DISCUSSION
-  // speech and the Mafia night whisper.
-  const textTurn = myTurn && (myTurn.phase === 'DISCUSSION' || myTurn.legal.includes('mafia_discuss')) ? myTurn : null;
+
+  // The scene's overlay handles target-pick actions (vote / kill / investigate /
+  // protect). The bottom bar handles free-text moves: DISCUSSION speech and the
+  // Mafia night whisper.
+  // Discussion bar stays mounted for the WHOLE discussion phase so you can always
+  // see the input — it's only *enabled* on your turn (the engine won't accept a
+  // move otherwise). `discussionTurn` is non-null exactly when it's your turn.
+  const inDiscussion = mode === 'play' && phase?.phase === 'DISCUSSION' && !!me?.alive;
+  const discussionTurn = myTurn && myTurn.phase === 'DISCUSSION' ? myTurn : null;
+  const nightWhisper = myTurn && myTurn.phase === 'NIGHT' && myTurn.legal.includes('mafia_discuss') ? myTurn : null;
+  const showBar = inDiscussion || !!nightWhisper;
+
+  // Mafia private channel — surface teammates' whispers + kill proposals live.
+  const whispers = useMemo(() => feed.filter((f): f is Extract<Feed, { k: 'whisper' }> => f.k === 'whisper'), [feed]);
+  const showMafiaChannel = mode === 'play' && myRole === 'mafia' && phase?.phase === 'NIGHT' && !!me?.alive;
+  // target id → names of the Mafia who voted to kill them (for obvious scene markers)
+  const killVotes = useMemo(() => {
+    const m: Record<string, string[]> = {};
+    for (const [agent, target] of Object.entries(killVotesByAgent)) {
+      if (!target) continue;
+      (m[target] ??= []).push(nameOf(agent));
+    }
+    return m;
+  }, [killVotesByAgent, nameOf]);
 
   // Latest spoken line drives the fading lower-third caption.
   const lastSpeak = useMemo(() => {
@@ -303,6 +332,7 @@ export default function Home() {
           findings={findings}
           teammates={teammates}
           protectedId={protectedId}
+          killVotes={killVotes}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />
@@ -377,27 +407,62 @@ export default function Home() {
       {/* menu → gameplay transition (role reveal for play, cinematic for watch) */}
       {intro && <IntroOverlay mode={intro} role={myRole} onDone={() => setIntro(null)} />}
 
-      {/* fading lower-third caption: who's speaking, with their face + line */}
+      {/* fading lower-third caption: who's speaking, with their face + line.
+          Click it (while visible) to open the full transcript. */}
       <div
-        className={`pointer-events-none absolute bottom-4 left-1/2 z-20 w-[min(680px,calc(100%-2rem))] -translate-x-1/2 transition-opacity duration-500 ${
-          captionVisible && captionWho ? 'opacity-100' : 'opacity-0'
-        }`}
+        className={`absolute left-1/2 z-20 w-[min(680px,calc(100%-2rem))] -translate-x-1/2 transition-all duration-500 ${
+          showBar ? 'bottom-28' : 'bottom-4'
+        } ${captionVisible && captionWho ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
       >
         {captionWho && (
-          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-t from-black/85 via-black/60 to-black/25 px-4 py-3 shadow-lg shadow-black/50 backdrop-blur-md">
+          <button
+            type="button"
+            onClick={() => setShowLog((v) => !v)}
+            title="Open the full transcript"
+            className="flex w-full items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-t from-black/85 via-black/60 to-black/25 px-4 py-3 text-left shadow-lg shadow-black/50 backdrop-blur-md transition hover:border-white/25 hover:from-black/90"
+          >
             <PlayerFace name={nameOf(captionWho)} size={46} />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/90">{nameOf(captionWho)}</div>
-              <div className="line-clamp-2 text-sm leading-snug text-neutral-100">{lastSpeak?.text}</div>
+              <AutoScrollText text={lastSpeak?.text} />
             </div>
-          </div>
+          </button>
         )}
       </div>
 
-      {/* free-text action bar (DISCUSSION speech / Mafia whisper), pinned bottom */}
-      {textTurn && (
+      {/* Mafia private channel — see what your partner is thinking / proposing */}
+      {showMafiaChannel && (
+        <div className="absolute left-3 top-16 z-30 flex max-h-[42vh] w-72 flex-col rounded-xl border border-fuchsia-500/30 bg-neutral-950/80 backdrop-blur">
+          <div className="border-b border-fuchsia-500/20 px-3 py-2">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-fuchsia-300">🤫 Mafia channel</div>
+            <div className="mt-0.5 truncate text-[10px] text-fuchsia-300/60">
+              {teammates.length ? `with ${teammates.map((id) => nameOf(id)).join(', ')}` : 'you’re the lone wolf'}
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
+            {whispers.length === 0 ? (
+              <p className="text-[11px] text-neutral-500">No whispers yet. Your partner is deciding…</p>
+            ) : (
+              whispers.slice(-12).map((w, i) => (
+                <p key={i} className="text-xs leading-snug text-fuchsia-200/90">
+                  <span className="font-semibold">{nameOf(w.who)}:</span> {w.text}
+                </p>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* free-text action bar — DISCUSSION speech (always visible during the phase,
+          enabled on your turn) / Mafia night whisper. Pinned to the bottom. */}
+      {showBar && (
         <div className="absolute inset-x-0 bottom-0 z-30">
-          <ActionBar turn={textTurn} onSubmit={submitAction} />
+          <ActionBar
+            phase={nightWhisper ? 'NIGHT' : 'DISCUSSION'}
+            turn={nightWhisper ?? discussionTurn}
+            players={players}
+            onSubmit={submitAction}
+          />
         </div>
       )}
 
@@ -453,6 +518,43 @@ export default function Home() {
         </div>
       </div>
     </main>
+  );
+}
+
+// Caption text that auto-scrolls through itself when a line is too long to fit the
+// fixed-height bar — pauses at the top, eases down to reveal the rest, then settles.
+function AutoScrollText({ text }: { text?: string }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.scrollTop = 0;
+    const overflow = el.scrollHeight - el.clientHeight;
+    if (overflow <= 2) return;
+    let raf = 0;
+    let stopped = false;
+    let startTs: number | null = null;
+    const START_DELAY = 800; // dwell at the top so the start is readable
+    const SPEED = 0.024; // px per ms
+    const duration = overflow / SPEED;
+    const step = (ts: number) => {
+      if (stopped) return;
+      if (startTs == null) startTs = ts;
+      const elapsed = ts - startTs;
+      const p = Math.max(0, Math.min(1, (elapsed - START_DELAY) / duration));
+      el.scrollTop = overflow * p;
+      if (p < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+    };
+  }, [text]);
+  return (
+    <div ref={ref} className="max-h-[4.5rem] overflow-hidden text-sm leading-snug text-neutral-100">
+      {text}
+    </div>
   );
 }
 
@@ -611,18 +713,30 @@ function IntroOverlay({ mode, role, onDone }: { mode: 'play' | 'watch'; role: st
   );
 }
 
-function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, args: any) => void }) {
+function ActionBar({
+  phase,
+  turn,
+  players,
+  onSubmit,
+}: {
+  phase: string;
+  turn: Turn | null; // non-null only when it's actually your turn
+  players: Player[];
+  onSubmit: (tool: string, args: any) => void;
+}) {
   const [text, setText] = useState('');
   const [target, setTarget] = useState('');
   const [discussKind, setDiscussKind] = useState<'speak' | 'accuse' | 'defend'>('speak');
   const ptt = usePushToTalk((t) => setText((prev) => (prev ? `${prev} ${t}` : t)));
 
-  const alive = turn.alive;
-  const phase = turn.phase;
+  const myTurn = !!turn; // can you actually act right now?
+  // alive others for the accuse dropdown — from the turn payload, else the roster.
+  const alive = turn?.alive ?? players.filter((p) => p.alive && !p.human).map((p) => ({ id: p.id, name: p.name }));
 
   const Mic = () => (
     <button
       type="button"
+      disabled={!myTurn}
       onMouseDown={ptt.start}
       onMouseUp={ptt.stop}
       onMouseLeave={() => ptt.status === 'recording' && ptt.stop()}
@@ -634,8 +748,8 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
         e.preventDefault();
         ptt.stop();
       }}
-      title="Hold to talk"
-      className={`rounded border px-3 py-1.5 text-sm transition ${
+      title={myTurn ? 'Hold to talk' : 'Wait for your turn'}
+      className={`rounded border px-3 py-1.5 text-sm transition disabled:opacity-40 ${
         ptt.status === 'recording'
           ? 'border-red-500 bg-red-500/20 text-red-300'
           : ptt.status === 'transcribing'
@@ -648,10 +762,18 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
   );
 
   return (
-    <div className="border-t border-amber-500/30 bg-neutral-900/80 px-5 py-3">
+    <div className="border-t border-amber-500/30 bg-neutral-900/85 px-5 py-3 backdrop-blur">
       <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-400">
-        Your turn · {phase}
-        <span className="font-normal normal-case text-neutral-500">· hold 🎤 to speak your move</span>
+        {myTurn ? (
+          <>
+            Your turn · {phase}
+            <span className="font-normal normal-case text-neutral-500">· hold 🎤 to speak your move</span>
+          </>
+        ) : (
+          <span className="text-neutral-500">
+            {phase} · <span className="text-amber-300/70">the table is talking…</span> compose your move — you’ll send it on your turn
+          </span>
+        )}
       </div>
 
       {phase === 'DISCUSSION' && (
@@ -683,8 +805,12 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
             onKeyDown={(e) => e.key === 'Enter' && submitDiscussion()}
           />
           <Mic />
-          <button onClick={submitDiscussion} className="rounded bg-amber-500 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-amber-400">
-            Send
+          <button
+            onClick={submitDiscussion}
+            disabled={!myTurn}
+            className="rounded bg-amber-500 px-4 py-1.5 text-sm font-semibold text-neutral-950 transition hover:bg-amber-400 disabled:cursor-default disabled:bg-neutral-700 disabled:text-neutral-400"
+          >
+            {myTurn ? 'Send' : 'Waiting…'}
           </button>
         </div>
       )}
@@ -694,26 +820,25 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
           the free-text Mafia night whisper. */}
       {phase === 'NIGHT' && (
         <div className="space-y-2">
-          {turn.teammates.length > 0 && (
+          {!!turn && turn.teammates.length > 0 && (
             <div className="text-xs text-fuchsia-300/80">Your Mafia team: {turn.teammates.map((t) => t.name).join(', ') || '—'}</div>
           )}
-          {turn.legal.includes('mafia_discuss') && (
-            <div className="flex items-end gap-2">
-              <input
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="whisper to your team…"
-                className="flex-1 rounded border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm"
-              />
-              <Mic />
-              <button
-                onClick={() => text && onSubmit('mafia_discuss', { message: text })}
-                className="rounded border border-fuchsia-500/40 px-3 py-1.5 text-sm font-semibold text-fuchsia-200 hover:bg-fuchsia-500/10"
-              >
-                Whisper
-              </button>
-            </div>
-          )}
+          <div className="flex items-end gap-2">
+            <input
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="whisper to your team…"
+              className="flex-1 rounded border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm"
+            />
+            <Mic />
+            <button
+              onClick={() => myTurn && text && onSubmit('mafia_discuss', { message: text })}
+              disabled={!myTurn}
+              className="rounded border border-fuchsia-500/40 px-3 py-1.5 text-sm font-semibold text-fuchsia-200 transition hover:bg-fuchsia-500/10 disabled:opacity-40"
+            >
+              Whisper
+            </button>
+          </div>
           <div className="text-xs text-neutral-500">Click a face in the scene, then use the on-screen buttons to act.</div>
         </div>
       )}
@@ -721,9 +846,11 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
   );
 
   function submitDiscussion() {
+    if (!myTurn) return;
     if (discussKind === 'speak' && text.trim()) onSubmit('speak', { text });
     else if (discussKind === 'accuse' && target && text.trim()) onSubmit('accuse', { target, reason: text });
     else if (discussKind === 'defend' && text.trim()) onSubmit('defend', { argument: text });
+    setText('');
   }
 }
 
