@@ -142,6 +142,55 @@ body {
   animation: breathe 9s ease-in-out infinite;
 }
 
+/* ── Continuous card slideshow (marquee) ─────────────────────────── */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marquee 32s linear infinite;
+}
+.marquee-track:hover {
+  animation-play-state: paused;
+}
+.marquee-mask {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 7%,
+    #000 93%,
+    transparent
+  );
+  mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent);
+}
+
+/* Side gradients on each slideshow card, like the hero. */
+.card-grad {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 22%;
+  background-size: cover;
+  background-position: center;
+}
+.card-grad-left {
+  left: 0;
+  -webkit-mask-image: linear-gradient(to right, #000 5%, transparent 95%);
+  mask-image: linear-gradient(to right, #000 5%, transparent 95%);
+}
+.card-grad-right {
+  right: 0;
+  -webkit-mask-image: linear-gradient(to left, #000 5%, transparent 95%);
+  mask-image: linear-gradient(to left, #000 5%, transparent 95%);
+}
+
 /* hide scrollbars on horizontal shelves while keeping scroll */
 .no-scrollbar {
   -ms-overflow-style: none;
@@ -205,7 +254,8 @@ body {
   .live-dot,
   .breathe,
   .side-grad-left,
-  .side-grad-right {
+  .side-grad-right,
+  .marquee-track {
     animation: none;
   }
   .fade-up {
