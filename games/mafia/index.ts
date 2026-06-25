@@ -48,7 +48,7 @@ function setup(playerNames: string[]): GameState {
     round: 1,
     publicLog: [],
     winner: null,
-    meta: { gameId: crypto.randomUUID(), votes: {}, killProposals: {}, nightKill: null, protect: null, mafiaChat: [] },
+    meta: { gameId: crypto.randomUUID(), votes: {}, killProposals: {}, nightKill: null, protect: null },
   };
 }
 

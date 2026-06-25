@@ -46,7 +46,7 @@ export function systemPrompt(state: GameState, agent: AgentState): string {
       'YOUR SECRET ROLE: MAFIA.',
       `Your Mafia teammates: ${teamNames}. The rest of the table are innocent townsfolk who do NOT know who you are.`,
       'GOAL: eliminate the town until the Mafia equal or outnumber them. To do that you must:',
-      '- At NIGHT: coordinate with your team in the private channel and choose a town player to kill.',
+      '- At NIGHT: there is NO talking. Silently choose a town player to kill — you can see your teammates and the targets they have picked.',
       '- By DAY: blend in. Act like an innocent villager hunting Mafia. Deflect suspicion, cast doubt on town players,',
       '  and never reveal your team. Lying, framing innocents, and fake role claims are all fair game.',
       '- Protect your teammates subtly — do not defend them so hard that you look connected to them.',
@@ -111,14 +111,18 @@ export function renderContext(state: GameState, agent: AgentState): string {
     out.push(`Your secret knowledge: ${agent.private.knowledge.join(' ')}`);
   }
 
-  // Mafia night channel — visible only to Mafia, at night.
+  // Mafia night — silent. The Mafia don't talk; they only see each other and the
+  // kill targets each has locked in so far.
   if (state.phase === PHASE.NIGHT && isMafia(agent.role)) {
-    const chat = (state.meta.mafiaChat ?? []) as { speaker: PlayerId; text: string }[];
     const team = teammates(state, agent).map((p) => p.name).join(', ') || '(none — lone wolf)';
+    const proposals = (state.meta.killProposals ?? {}) as Record<PlayerId, PlayerId>;
+    const picks = Object.entries(proposals)
+      .map(([who, tgt]) => `${nameOf(state, who)} → ${nameOf(state, tgt)}`)
+      .join(', ');
     out.push(
       '',
-      `MAFIA NIGHT CHANNEL (secret). Your team: ${team}.`,
-      chat.length ? chat.map((m) => `${nameOf(state, m.speaker)}: ${m.text}`).join('\n') : '(no messages yet tonight)',
+      `MAFIA NIGHT (secret, SILENT — no talking). Your team: ${team}.`,
+      picks ? `Kill targets locked in so far: ${picks}.` : 'No kill targets locked in yet.',
     );
   }
 
@@ -132,10 +136,7 @@ function instruction(state: GameState, agent: AgentState): string {
   switch (state.phase) {
     case PHASE.NIGHT:
       if (isMafia(agent.role)) {
-        const lone = teammates(state, agent).filter((p) => p.alive).length === 0;
-        return lone
-          ? 'It is night. Call update_beliefs, then use mafia_propose_kill to choose tonight\'s victim.'
-          : 'It is night. Call update_beliefs, then EITHER mafia_discuss to coordinate with your team OR mafia_propose_kill to lock your target.';
+        return 'It is night and the table is silent — there is no talking. Call update_beliefs, then use mafia_propose_kill to silently choose tonight\'s victim.';
       }
       if (agent.role === ROLE.DETECTIVE)
         return 'It is night. Call update_beliefs, then investigate one player.';

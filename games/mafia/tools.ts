@@ -161,22 +161,9 @@ const vote: GameTool = {
   },
 };
 
-// ── mafia_discuss / mafia_propose_kill  (NIGHT, Mafia only) ─────────────────────
-const mafiaDiscuss: GameTool = {
-  name: 'mafia_discuss',
-  description:
-    'Speak privately to your fellow Mafia in the night channel. Town cannot hear this. Coordinate who to kill ' +
-    'and how to cover your tracks tomorrow.',
-  inputSchema: z.object({ message: z.string().describe('Your private message to your Mafia partners.') }),
-  legalIn: (state, agent) => state.phase === PHASE.NIGHT && isMafia(agent.role),
-  execute: async (args, ctx) => {
-    ctx.state.meta.mafiaChat = ctx.state.meta.mafiaChat ?? [];
-    ctx.state.meta.mafiaChat.push({ speaker: ctx.agent.id, text: args.message });
-    ctx.emit({ type: 'whisper', agent: ctx.agent.id, text: args.message, channel: 'mafia' });
-    return 'Message sent to your Mafia partners.';
-  },
-};
-
+// ── mafia_propose_kill  (NIGHT, Mafia only) ─────────────────────────────────
+// The night is SILENT, like real Mafia: there is no conversation. Each Mafia just
+// silently locks in a victim, and they can see each other's picks converge.
 const mafiaProposeKill: GameTool = {
   name: 'mafia_propose_kill',
   description:
@@ -184,7 +171,7 @@ const mafiaProposeKill: GameTool = {
     'Mafia votes dies at dawn (unless protected).',
   inputSchema: z.object({
     target: z.string().describe('The town player to kill, by name.'),
-    reason: z.string().optional().describe('Why this target — sent to your partners.'),
+    reason: z.string().optional().describe('Your private reasoning for this target (kept secret — shown to no one).'),
   }),
   legalIn: (state, agent) => state.phase === PHASE.NIGHT && isMafia(agent.role),
   execute: async (args, ctx) => {
@@ -193,9 +180,6 @@ const mafiaProposeKill: GameTool = {
     if (isMafia(t.role)) return `${t.name} is your own teammate. Pick a town player.`;
     ctx.state.meta.killProposals = ctx.state.meta.killProposals ?? {};
     ctx.state.meta.killProposals[ctx.agent.id] = t.id;
-    if (args.reason) {
-      ctx.emit({ type: 'whisper', agent: ctx.agent.id, text: `(kill ${t.name}) ${args.reason}`, channel: 'mafia' });
-    }
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'propose_kill', target: t.id });
     return `Your kill vote for ${t.name} is recorded.`;
   },
@@ -246,7 +230,6 @@ const ALL: GameTool[] = [
   defend,
   claimRole,
   vote,
-  mafiaDiscuss,
   mafiaProposeKill,
   investigate,
   protect,
@@ -255,11 +238,5 @@ const ALL: GameTool[] = [
 // What an agent may do, given the phase and its role. legalIn double-checks at
 // call time, but we also pre-filter so the model is only offered legal options.
 export function toolsFor(state: GameState, agent: AgentState): GameTool[] {
-  const tools = ALL.filter((t) => t.legalIn(state, agent));
-  // Lone-wolf Mafia: drop the pointless private chat so the model just proposes a kill.
-  if (state.phase === PHASE.NIGHT && isMafia(agent.role)) {
-    const mafiaAlive = state.players.filter((p) => p.alive && isMafia(p.role)).length;
-    if (mafiaAlive <= 1) return tools.filter((t) => t.name !== 'mafia_discuss');
-  }
-  return tools;
+  return ALL.filter((t) => t.legalIn(state, agent));
 }
