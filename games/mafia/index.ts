@@ -1,6 +1,6 @@
 import type { AgentState, GameDefinition, GameState } from '../../engine/types';
 import { recall } from '../../lib/memory';
-import { DEFAULT_ROSTER, FALLBACK_MODEL, personalityByName, roleDistribution } from './roles';
+import { DEFAULT_ROSTER, FALLBACK_MODEL, personalityByName, roleDistribution, ROLE, isMafia } from './roles';
 import { PHASE, PHASES, turnOrder, advancePhase, nextSpeaker } from './phases';
 import { toolsFor } from './tools';
 import { winner } from './winCondition';
@@ -89,12 +89,22 @@ async function recallForTurn(state: GameState, agent: AgentState): Promise<strin
   ].join('\n');
 }
 
+// At night, announce (anonymously — role only, never who) which role is about to
+// act, exactly when their turn begins. The UI narrates "the Detective wakes up…".
+function onTurnStart(state: GameState, agent: AgentState, emit: (e: any) => void): void {
+  if (state.phase !== PHASE.NIGHT) return;
+  if (isMafia(agent.role)) emit({ type: 'wake', role: 'mafia' });
+  else if (agent.role === ROLE.DETECTIVE) emit({ type: 'wake', role: 'detective' });
+  else if (agent.role === ROLE.DOCTOR) emit({ type: 'wake', role: 'doctor' });
+}
+
 export const mafiaGame: GameDefinition = {
   id: 'mafia',
   setup,
   phases: PHASES,
   turnOrder,
   toolsFor,
+  onTurnStart,
   advancePhase,
   winner,
   systemPrompt,

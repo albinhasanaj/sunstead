@@ -78,9 +78,9 @@ export default function Home() {
   type Announce = { eyebrow: string; title: string; face: string | null; tone: 'death' | 'save' | 'quiet' };
   const [announce, setAnnounce] = useState<Announce | null>(null);
   const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Brief "night falls" hush played each time the table goes to sleep.
-  // Bumped each time NIGHT begins, to (re)play the night narrator sequence.
-  const [nightKey, setNightKey] = useState(0);
+  // Which night role is acting right now ('mafia' | 'detective' | 'doctor' | null),
+  // driven by `wake` events so the narrator fires exactly when each role acts.
+  const [nightWake, setNightWake] = useState<string | null>(null);
   // Phase countdown + the "ready to move to vote" toggle.
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [wantsSkip, setWantsSkip] = useState(false);
@@ -148,11 +148,9 @@ export default function Home() {
           setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
           const night = e.phase === 'NIGHT';
+          setNightWake(null); // reset the narrator each phase; 'wake' events drive it at night
           if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
-          if (night) {
-            playSfx('night');
-            setNightKey((k) => k + 1); // (re)play the night narrator
-          }
+          if (night) playSfx('night');
           break;
         }
         case 'speak':
@@ -167,6 +165,10 @@ export default function Home() {
           break;
         case 'thinking':
           setThinkingIds((cur) => (e.on ? (cur.includes(e.agent) ? cur : [...cur, e.agent]) : cur.filter((id) => id !== e.agent)));
+          break;
+        case 'wake':
+          // A night role just started acting — narrate it now (anonymous: role only).
+          setNightWake(e.role);
           break;
         case 'whisper':
           setFeed((f) => [...f, { k: 'whisper', who: e.agent, text: e.text }]);
@@ -257,6 +259,7 @@ export default function Home() {
       setSelected(null);
       setSpeakingId(null);
       setThinkingIds([]);
+      setNightWake(null);
       setFindings({});
       setTeammates([]);
       setProtectedId(null);
@@ -424,14 +427,13 @@ export default function Home() {
   const captionVisible = !!speakingId;
   const captionWho = speakingId ?? lastSpeak?.who ?? null;
 
-  // "thinking…" cue (hidden while someone is actually speaking). Anonymous at night
-  // in play mode — night actions are secret, so we never name who's deliberating.
+  // "thinking…" cue (hidden while someone is speaking). At night the wake narrator
+  // is the indicator instead, so we suppress this here. A set, since several agents
+  // can deliberate at once — we surface the first that isn't the current speaker.
   const firstThinking = thinkingIds.find((id) => id !== speakingId) ?? null;
   const thinkingLabel =
-    firstThinking && !speakingId && running && !winner
-      ? mode === 'play' && phase?.phase === 'NIGHT'
-        ? 'The night unfolds…'
-        : `${nameOf(firstThinking)} is deliberating…`
+    firstThinking && !speakingId && running && !winner && phase?.phase !== 'NIGHT'
+      ? `${nameOf(firstThinking)} is deliberating…`
       : null;
 
   // ── phase timers (generous; the timer never rushes you) ─────────────────────
@@ -644,7 +646,7 @@ export default function Home() {
       {/* night narrator — calls the roles to "wake up" in sequence so it's clear
           what's happening. Always calls every role (regardless of who's actually
           in play) so it never leaks who's alive; your own role is highlighted. */}
-      {running && phase?.phase === 'NIGHT' && <NightNarration key={nightKey} myRole={myRole} />}
+      {running && phase?.phase === 'NIGHT' && <NightNarration wake={nightWake} myRole={myRole} />}
 
       {/* dramatic outcome announcement: death (red), doctor-save (teal), quiet (slate) */}
       {announce && (
@@ -856,40 +858,24 @@ function AutoScrollText({ text }: { text?: string }) {
   );
 }
 
-// Night narrator — walks the table through the wake-up ritual: town sleeps →
-// Mafia → Detective → Doctor. It ALWAYS calls every role, whether or not that role
-// is actually in play, so the call leaks nothing about who's alive. Your own role
-// is highlighted in its colour. Purely cosmetic; it just narrates the structure.
-const NIGHT_BEATS: { eyebrow: string; text: string; role: string | null; color: string }[] = [
-  { eyebrow: 'Night falls', text: 'the town closes its eyes…', role: null, color: '#a5b4fc' },
-  { eyebrow: 'The Mafia awaken', text: 'they choose tonight’s victim', role: 'mafia', color: '#e0454f' },
-  { eyebrow: 'The Detective awakens', text: 'seeking out the guilty', role: 'detective', color: '#5fd0ff' },
-  { eyebrow: 'The Doctor awakens', text: 'shielding a soul from harm', role: 'doctor', color: '#2dd4bf' },
-];
-function NightNarration({ myRole }: { myRole: string }) {
-  const [i, setI] = useState(0);
-  const [done, setDone] = useState(false);
-  useEffect(() => {
-    const PER = 2600;
-    let idx = 0;
-    setI(0);
-    const iv = setInterval(() => {
-      idx += 1;
-      if (idx >= NIGHT_BEATS.length) {
-        clearInterval(iv);
-        setTimeout(() => setDone(true), PER);
-        return;
-      }
-      setI(idx);
-    }, PER);
-    return () => clearInterval(iv);
-  }, []);
-  if (done) return null;
-  const b = NIGHT_BEATS[i];
-  const mine = !!b.role && b.role === myRole;
+// Night narrator — announces each role's wake-up EXACTLY when it acts, driven by
+// `wake` events from the engine (so the table truly takes turns: Mafia, then the
+// Detective, then the Doctor — never all at once). Before any role has acted it
+// shows the "night falls" hush. Your own role is highlighted; the event is
+// anonymous (role only), so it never names who's acting.
+const NIGHT_BEATS: Record<string, { eyebrow: string; text: string; color: string }> = {
+  '': { eyebrow: 'Night falls', text: 'the town closes its eyes…', color: '#a5b4fc' },
+  mafia: { eyebrow: 'The Mafia awaken', text: 'they choose tonight’s victim', color: '#e0454f' },
+  detective: { eyebrow: 'The Detective awakens', text: 'seeking out the guilty', color: '#5fd0ff' },
+  doctor: { eyebrow: 'The Doctor awakens', text: 'shielding a soul from harm', color: '#2dd4bf' },
+};
+function NightNarration({ wake, myRole }: { wake: string | null; myRole: string }) {
+  const b = NIGHT_BEATS[wake ?? ''] ?? NIGHT_BEATS[''];
+  const mine = !!wake && wake === myRole;
   return (
     <div className="pointer-events-none absolute inset-x-0 top-[26%] z-30 flex justify-center px-6">
-      <div key={i} className="night-beat text-center">
+      {/* re-key on `wake` so each new actor animates in fresh */}
+      <div key={wake ?? 'sleep'} className="night-beat text-center">
         <div className="text-xs font-semibold uppercase tracking-[0.5em]" style={{ color: mine ? b.color : b.color + 'b0', textShadow: `0 0 18px ${b.color}66` }}>
           {b.eyebrow}
           {mine && ' — that’s you'}
@@ -897,8 +883,8 @@ function NightNarration({ myRole }: { myRole: string }) {
         <div className="mt-2 text-lg font-light tracking-[0.22em] text-indigo-50/85">{b.text}</div>
       </div>
       <style>{`
-        @keyframes nightBeat { 0%{opacity:0; transform:translateY(8px)} 18%{opacity:1; transform:none} 82%{opacity:1} 100%{opacity:0; transform:translateY(-6px)} }
-        .night-beat { animation: nightBeat 2.6s ease forwards; }
+        @keyframes nightBeat { 0%{opacity:0; transform:translateY(8px)} 30%{opacity:1; transform:none} 100%{opacity:1} }
+        .night-beat { animation: nightBeat .6s ease forwards; }
       `}</style>
     </div>
   );

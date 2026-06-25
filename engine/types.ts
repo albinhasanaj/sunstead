@@ -56,6 +56,9 @@ export interface GameDefinition {
   // Phases whose turns are independent (e.g. secret simultaneous voting) and may
   // run concurrently instead of one at a time.
   parallelPhases?: string[];
+  // Optional: called by the orchestrator right before each agent's turn runs, so a
+  // game can announce who/what is about to act (e.g. Mafia's night wake-up calls).
+  onTurnStart?: (state: GameState, agent: AgentState, emit: Emit) => void;
   // Resolve the phase that just finished and mutate state to the next phase.
   // Gets `emit` so resolution can announce deaths / reveals.
   advancePhase: (state: GameState, emit: Emit) => void | Promise<void>;
@@ -90,4 +93,7 @@ export type GameEvent =
   // protected by the doctor; 'quiet' = no kill landed. Carries no ids — no one
   // learns who was targeted or who saved them.
   | { type: 'night'; outcome: 'saved' | 'quiet' }
+  // A night role is about to act now (anonymous — role only, never who). Lets the
+  // UI narrate "the Detective wakes up" exactly when they actually do.
+  | { type: 'wake'; role: string }
   | { type: 'win'; winner: string };

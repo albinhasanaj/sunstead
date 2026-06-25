@@ -3,6 +3,10 @@ import type { AgentState, Emit, GameDefinition, GameState, ToolContext } from '.
 
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 
+// A single seat's LLM call is hard-capped so one slow/stalled model can never
+// freeze the whole game. On timeout we abort and (below) retry on the fallback.
+const TURN_TIMEOUT_MS = Number(process.env.MAFIA_TURN_TIMEOUT_MS ?? 30000);
+
 // One agent's turn = exactly one AI SDK call.
 // The agent is instructed to FIRST record private beliefs (drives the minds panel)
 // and THEN take exactly one action. Both are genuine tool calls.
@@ -82,6 +86,8 @@ export async function takeTurn(
       // exactly two calls per turn: update_beliefs, then one game action.
       toolChoice: 'required',
       stopWhen: [stepCountIs(2)],
+      // Don't let a single slow/hung provider stall the table forever.
+      abortSignal: AbortSignal.timeout(TURN_TIMEOUT_MS),
     });
 
   // Light up "thinking" for this seat while its single LLM turn runs. A parallel
@@ -94,19 +100,23 @@ export async function takeTurn(
       await run(model);
       console.log(`[turn]   ${agent.name} · LLM (${model}) took ${Date.now() - llmStart}ms`);
     } catch (err) {
-      // A single provider hiccup (rate limit, gated model) shouldn't stall the table.
-      // Retry once on the fallback model so the seat still gets to act this turn.
+      const timedOut = (err as Error)?.name === 'TimeoutError' || /abort|timeout/i.test((err as Error)?.message ?? '');
+      const why = timedOut ? `timed out after ${Date.now() - llmStart}ms` : `failed: ${(err as Error).message}`;
+      // A single provider hiccup (rate limit, gated model, hang) shouldn't stall the
+      // table. Retry once on the fallback model so the seat still gets to act.
       if (def.fallbackModel && def.fallbackModel !== model) {
         try {
-          console.error(`[agent ${agent.name}] ${model} failed → retrying on ${def.fallbackModel}`);
+          console.error(`[turn]   ${agent.name} · ${model} ${why} → retrying on ${def.fallbackModel}`);
+          const fbStart = Date.now();
           await run(def.fallbackModel);
+          console.log(`[turn]   ${agent.name} · fallback LLM (${def.fallbackModel}) took ${Date.now() - fbStart}ms`);
           return;
         } catch (err2) {
-          console.error(`[agent ${agent.name}] fallback also failed:`, (err2 as Error).message);
+          console.error(`[turn]   ${agent.name} · fallback also failed:`, (err2 as Error).message);
           return;
         }
       }
-      console.error(`[agent ${agent.name}] turn failed:`, (err as Error).message);
+      console.error(`[turn]   ${agent.name} · ${model} ${why} (no fallback) — skipping turn`);
     }
   } finally {
     emit({ type: 'thinking', agent: agent.id, on: false });
