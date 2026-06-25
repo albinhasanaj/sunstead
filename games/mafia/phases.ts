@@ -76,12 +76,14 @@ function resolveNight(state: GameState, emit: Emit): void {
       emit({ type: 'death', target: victim.id, role: victim.role });
       void publish(TOPIC_TABLE, {
         kind: 'death', gameId: state.meta.gameId as string, round: state.round,
-        target: victim.name, role: victim.role,
-        text: `${victim.name} was found dead. They were a ${victim.role}.`,
+        target: victim.name, role: victim.role, // structured (analytics) only — never shown to agents
+        text: `${victim.name} was found dead.`,
       });
+      // Hidden-role variant: the death does NOT reveal what they were. Only the
+      // player themselves (and Mafia teammates) ever know a role.
       state.publicLog.push({
         speaker: 'system',
-        text: `Dawn breaks. ${victim.name} was found dead. They were a ${victim.role}.`,
+        text: `Dawn breaks. ${victim.name} was found dead.`,
       });
       return;
     }
@@ -142,12 +144,13 @@ async function tallyVotes(state: GameState, emit: Emit): Promise<void> {
   victim.alive = false;
   emit({ type: 'reveal', target: victim.id, role: victim.role });
   void publish(TOPIC_TABLE, {
-    kind: 'reveal', gameId, round, target: victim.name, role: victim.role,
-    text: `${victim.name} was voted out — they were a ${victim.role}.`,
+    kind: 'reveal', gameId, round, target: victim.name, role: victim.role, // structured only — never shown to agents
+    text: `${victim.name} was voted out.`,
   });
+  // Hidden-role variant: the vote-out does NOT reveal what they were.
   state.publicLog.push({
     speaker: 'system',
-    text: `The town voted out ${victim.name} (${bestN} votes). They were a ${victim.role}.`,
+    text: `The town voted out ${victim.name} (${bestN} votes).`,
   });
 }
 

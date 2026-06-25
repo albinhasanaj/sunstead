@@ -136,13 +136,14 @@ export default function Home() {
           setFeed((f) => [...f, { k: 'whisper', who: e.agent, text: e.text }]);
           break;
         case 'death':
-          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, role: e.role } : p)));
-          setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night (${e.role}).` }]);
+          // Hidden-role variant: mark them dead but keep their role secret.
+          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
+          setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.` }]);
           playSfx('death');
           break;
         case 'reveal':
-          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, role: e.role } : p)));
-          setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out — they were ${e.role}.` }]);
+          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
+          setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.` }]);
           playSfx('reveal');
           break;
         case 'vote':
