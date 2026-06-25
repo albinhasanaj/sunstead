@@ -4,8 +4,9 @@ import { useCallback, useRef, useState } from 'react';
 
 type Status = 'idle' | 'recording' | 'transcribing';
 
-// Push-to-talk mic capture → /api/stt → transcript. Hold to record, release to
-// transcribe; the resulting text is handed back so the UI can fill the turn input.
+// Mic capture → /api/stt → transcript. Click `toggle` to start recording, click
+// again to stop + transcribe; the resulting text is handed back so the UI can fill
+// the turn input. (start/stop stay exposed for any hold-to-talk callers.)
 export function usePushToTalk(onTranscript: (text: string) => void) {
   const [status, setStatus] = useState<Status>('idle');
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -55,5 +56,12 @@ export function usePushToTalk(onTranscript: (text: string) => void) {
     }
   }, [status, onTranscript]);
 
-  return { status, start, stop };
+  // Click-to-toggle: begin a fresh recording, or stop (and transcribe) the current
+  // one. Ignored while a previous clip is still transcribing.
+  const toggle = useCallback(() => {
+    if (status === 'recording') stop();
+    else if (status === 'idle') void start();
+  }, [status, start, stop]);
+
+  return { status, start, stop, toggle };
 }

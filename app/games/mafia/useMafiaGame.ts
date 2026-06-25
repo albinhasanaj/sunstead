@@ -102,10 +102,9 @@ export function useMafiaGame() {
   // ahead of what you're hearing. onIdle gates your turn until the room is quiet.
   useEffect(() => {
     voice.bind({
+      // The transcript is filled once, in the `speak` handler. The queue only paces
+      // the centre caption + speaking head so they track the ACTUAL audio.
       onStart: (item) => {
-        // Reveal the line in the transcript at the exact moment its audio begins, so
-        // the right-side log never races ahead of the centre caption / the voice.
-        setFeed((f) => [...f, { k: 'speak', who: item.id, text: item.text }]);
         setSpeakingId(item.id);
         setSpeakingLine({ who: item.id, text: item.text });
       },
@@ -113,11 +112,6 @@ export function useMafiaGame() {
         setSpeakingId((cur) => (cur === item.id ? null : cur));
       },
       onIdle: (v) => setVoiceIdle(v),
-      // Lines dropped from the queue before they could be voiced (you muted, or the
-      // phase turned over) still belong in the transcript — append them now.
-      onFlush: (items) => {
-        if (items.length) setFeed((f) => [...f, ...items.map((it) => ({ k: 'speak' as const, who: it.id, text: it.text }))]);
-      },
     });
   }, [voice]);
 
@@ -149,19 +143,21 @@ export function useMafiaGame() {
           break;
         }
         case 'speak': {
-          // Your OWN line shows instantly (you typed it) and isn't read back by TTS.
           const isHuman = e.agent === humanIdRef.current;
-          if (isHuman || !soundOnRef.current) {
-            setFeed((f) => [...f, { k: 'speak', who: e.agent, text: e.text }]);
-          }
+          // Reveal the line in the transcript exactly once. A seat never speaks twice
+          // in a row, so an identical back-to-back line is always a stray duplicate.
+          setFeed((f) => {
+            const last = f[f.length - 1];
+            if (last && last.k === 'speak' && last.who === e.agent && last.text === e.text) return f;
+            return [...f, { k: 'speak', who: e.agent, text: e.text }];
+          });
           if (!isHuman && soundOnRef.current) {
-            // Voice on: the audio queue owns the spoken floor AND the transcript reveal.
-            // The line enters the feed in onStart (when its audio begins), one at a
-            // time, so the right-side log never jumps ahead to the next model.
+            // Voice on (AI line): the audio queue paces the caption + speaking head,
+            // one line at a time, so the floor never jumps ahead to the next model.
             voice.enqueue({ id: e.agent, name: nameOf(e.agent), text: e.text });
-          } else if (!isHuman) {
-            // Muted AI line: no audio to pace against — hold the caption for a readable,
-            // text-length beat so it still doesn't flicker past.
+          } else {
+            // Your OWN line (no need to read it back to you) or a muted AI line: no
+            // audio to pace against — hold the caption a readable, text-length beat.
             setSpeakingId(e.agent);
             setSpeakingLine({ who: e.agent, text: e.text });
             if (speakTimerRef.current) clearTimeout(speakTimerRef.current);

@@ -103,22 +103,12 @@ export default function VoiceDock({
           {voiceOn ? '🔊' : '🔇'}
         </button>
 
-        {/* the orb — hold to talk */}
+        {/* the orb — click to start, click again to stop & send */}
         <button
           type="button"
-          disabled={!active}
-          onMouseDown={ptt.start}
-          onMouseUp={ptt.stop}
-          onMouseLeave={() => recording && ptt.stop()}
-          onTouchStart={(e) => {
-            e.preventDefault();
-            ptt.start();
-          }}
-          onTouchEnd={(e) => {
-            e.preventDefault();
-            ptt.stop();
-          }}
-          title={active ? 'Hold to speak your move' : 'Wait for your turn'}
+          disabled={!active && !recording}
+          onClick={ptt.toggle}
+          title={recording ? 'Click to stop & send' : active ? 'Click to speak your move' : 'Wait for your turn'}
           className="relative flex h-20 w-20 items-center justify-center rounded-full transition disabled:cursor-default"
           style={{
             background: `radial-gradient(circle at 50% 35%, ${accent}33, ${accent}10 60%, transparent 70%)`,
@@ -141,7 +131,7 @@ export default function VoiceDock({
               background: recording ? 'rgba(240,88,106,0.18)' : 'rgba(8,10,16,0.8)',
               boxShadow: live ? `0 0 26px ${accent}88` : `0 0 12px ${accent}44`,
               color: accent,
-              opacity: active ? 1 : 0.5,
+              opacity: active || recording ? 1 : 0.5,
             }}
           >
             {transcribing ? (
@@ -171,8 +161,8 @@ export default function VoiceDock({
 
       {/* hint line */}
       <div className="text-[11px] tracking-wide text-neutral-400">
-        {active ? (
-          <span className="text-amber-200/90">your turn — {recording ? 'release to send' : transcribing ? 'transcribing…' : 'hold the mic to speak'}</span>
+        {active || recording ? (
+          <span className="text-amber-200/90">your turn — {recording ? 'click to stop & send' : transcribing ? 'transcribing…' : 'click the mic to speak'}</span>
         ) : waiting ? (
           <span className="text-sky-300/80">listening — you’re up once the table finishes…</span>
         ) : (
