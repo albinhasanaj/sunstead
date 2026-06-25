@@ -3,6 +3,7 @@ import type { AgentState, GameState, GameTool, PlayerId, ToolContext } from '../
 import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
 import { remember } from '../../lib/memory';
+import { publish, TOPIC_TABLE, TOPIC_VOTES } from '../../lib/bus';
 
 // Resolve a player the model referred to by name (preferred) or id.
 function resolve(state: GameState, ref: string, opts: { aliveOnly?: boolean } = {}): AgentState | undefined {
@@ -17,15 +18,14 @@ function resolve(state: GameState, ref: string, opts: { aliveOnly?: boolean } = 
 
 const inPhase = (phase: string) => (state: GameState) => state.phase === phase;
 
-// Persist a public line to long-term memory (Aiven MCP + pgvector). Awaited so a
-// later turn's recall is guaranteed to see it; never throws (handled in remember).
-async function rememberLine(ctx: ToolContext, text: string): Promise<void> {
-  await remember({
-    gameId: ctx.state.meta.gameId as string,
-    round: ctx.state.round,
-    phase: ctx.state.phase,
-    speaker: ctx.agent.name,
-    text,
+// Record a public line: persist to long-term memory (pgvector) AND publish it to
+// the Kafka table topic — both via Aiven MCP. Memory is awaited (so a later turn's
+// recall sees it); the Kafka publish is fire-and-forget so it never slows the turn.
+async function recordPublic(ctx: ToolContext, kind: string, text: string, target?: string): Promise<void> {
+  const gameId = ctx.state.meta.gameId as string;
+  await remember({ gameId, round: ctx.state.round, phase: ctx.state.phase, speaker: ctx.agent.name, text });
+  void publish(TOPIC_TABLE, {
+    kind, gameId, round: ctx.state.round, phase: ctx.state.phase, speaker: ctx.agent.name, text, target,
   });
 }
 
@@ -73,7 +73,7 @@ const speak: GameTool = {
   execute: async (args, ctx) => {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: args.text });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: args.text });
-    await rememberLine(ctx, args.text);
+    await recordPublic(ctx, 'speak', args.text);
     return 'You spoke. Your turn is over.';
   },
 };
@@ -94,7 +94,7 @@ const accuse: GameTool = {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'accuse', target: t.id });
-    await rememberLine(ctx, line);
+    await recordPublic(ctx, 'accuse', line, t.name);
     return `You accused ${t.name}. Your turn is over.`;
   },
 };
@@ -115,7 +115,7 @@ const defend: GameTool = {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'defend', target: t?.id });
-    await rememberLine(ctx, line);
+    await recordPublic(ctx, 'defend', line, t?.name);
     return 'You made your defense. Your turn is over.';
   },
 };
@@ -134,7 +134,7 @@ const claimRole: GameTool = {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'claim_role' });
-    await rememberLine(ctx, line);
+    await recordPublic(ctx, 'claim', line);
     return 'You made your claim. Your turn is over.';
   },
 };
@@ -150,6 +150,11 @@ const vote: GameTool = {
     if (!t) return `No living player named "${args.target}".`;
     ctx.state.meta.votes = ctx.state.meta.votes ?? {};
     ctx.state.meta.votes[ctx.agent.id] = t.id;
+    // Publish the vote to the Kafka votes topic via MCP; the tally consumes it back.
+    void publish(TOPIC_VOTES, {
+      kind: 'vote', gameId: ctx.state.meta.gameId as string, round: ctx.state.round,
+      voter: ctx.agent.name, voterId: ctx.agent.id, target: t.name, targetId: t.id,
+    });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'vote', target: t.id });
     return `Your vote for ${t.name} is locked in. Your turn is over.`;
   },

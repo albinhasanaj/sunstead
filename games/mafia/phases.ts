@@ -1,5 +1,6 @@
 import type { AgentState, Emit, GameState, PlayerId } from '../../engine/types';
 import { ROLE, isMafia } from './roles';
+import { busEnabled, drain, publish, TOPIC_TABLE, TOPIC_VOTES } from '../../lib/bus';
 
 export const PHASE = {
   NIGHT: 'NIGHT',
@@ -41,7 +42,7 @@ export function turnOrder(state: GameState): PlayerId[] {
 }
 
 // Resolve the phase that just finished and advance to the next one.
-export function advancePhase(state: GameState, emit: Emit): void {
+export async function advancePhase(state: GameState, emit: Emit): Promise<void> {
   switch (state.phase) {
     case PHASE.NIGHT:
       resolveNight(state, emit);
@@ -51,7 +52,7 @@ export function advancePhase(state: GameState, emit: Emit): void {
       state.phase = PHASE.VOTE;
       break;
     case PHASE.VOTE:
-      tallyVotes(state, emit);
+      await tallyVotes(state, emit);
       state.phase = PHASE.NIGHT;
       state.round += 1;
       // fresh night
@@ -73,6 +74,11 @@ function resolveNight(state: GameState, emit: Emit): void {
     if (victim && victim.alive) {
       victim.alive = false;
       emit({ type: 'death', target: victim.id, role: victim.role });
+      void publish(TOPIC_TABLE, {
+        kind: 'death', gameId: state.meta.gameId as string, round: state.round,
+        target: victim.name, role: victim.role,
+        text: `${victim.name} was found dead. They were a ${victim.role}.`,
+      });
       state.publicLog.push({
         speaker: 'system',
         text: `Dawn breaks. ${victim.name} was found dead. They were a ${victim.role}.`,
@@ -86,12 +92,32 @@ function resolveNight(state: GameState, emit: Emit): void {
   });
 }
 
-function tallyVotes(state: GameState, emit: Emit): void {
-  const votes: Record<PlayerId, PlayerId> = state.meta.votes ?? {};
-  const counts: Record<PlayerId, number> = {};
-  for (const target of Object.values(votes)) counts[target] = (counts[target] ?? 0) + 1;
+async function tallyVotes(state: GameState, emit: Emit): Promise<void> {
+  const gameId = state.meta.gameId as string;
+  const round = state.round;
+  const memVotes: Record<PlayerId, PlayerId> = state.meta.votes ?? {};
 
-  for (const [voter, target] of Object.entries(votes)) {
+  // Primary path: decide the result by CONSUMING the votes topic from Kafka via
+  // the Aiven MCP. Fall back to the in-memory votes if Kafka is off or empty.
+  const counts: Record<PlayerId, number> = {};
+  let source = 'memory';
+  if (busEnabled()) {
+    const msgs = await drain(TOPIC_VOTES);
+    const mine = msgs.filter((m) => m.gameId === gameId && m.round === round && m.targetId);
+    if (mine.length) {
+      const byVoter: Record<string, string> = {};
+      for (const m of mine) byVoter[m.voterId as string] = m.targetId as string; // last vote wins
+      for (const target of Object.values(byVoter)) counts[target] = (counts[target] ?? 0) + 1;
+      source = 'kafka';
+      console.error(`\u{1F5F3}\uFE0F  tally via Kafka: consumed ${mine.length} vote record(s) for round ${round} through Aiven MCP.`);
+    }
+  }
+  if (source === 'memory') {
+    for (const target of Object.values(memVotes)) counts[target] = (counts[target] ?? 0) + 1;
+  }
+
+  // Emit each vote for the UI (from the always-present in-memory record).
+  for (const [voter, target] of Object.entries(memVotes)) {
     emit({ type: 'vote', agent: voter, target });
   }
 
@@ -115,6 +141,10 @@ function tallyVotes(state: GameState, emit: Emit): void {
   const victim = state.players.find((p) => p.id === best)!;
   victim.alive = false;
   emit({ type: 'reveal', target: victim.id, role: victim.role });
+  void publish(TOPIC_TABLE, {
+    kind: 'reveal', gameId, round, target: victim.name, role: victim.role,
+    text: `${victim.name} was voted out — they were a ${victim.role}.`,
+  });
   state.publicLog.push({
     speaker: 'system',
     text: `The town voted out ${victim.name} (${bestN} votes). They were a ${victim.role}.`,

@@ -42,7 +42,7 @@ export async function runGame(
     }
 
     if (def.winner(state) !== null) break;
-    def.advancePhase(state, emit); // resolve finished phase + advance; may emit deaths/reveals
+    await def.advancePhase(state, emit); // resolve finished phase + advance; may emit deaths/reveals
   }
 
   const winner = def.winner(state) ?? 'draw';

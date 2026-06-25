@@ -10,7 +10,7 @@ import { sessions, type GameSession } from '@/lib/gameSessions';
 // for an action POSTed to /api/game/action. Run locally so there's no timeout.
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 3600;
+export const maxDuration = 1800;
 
 const HUMAN_NAME = 'You';
 

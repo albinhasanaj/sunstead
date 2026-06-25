@@ -49,7 +49,7 @@ export interface GameDefinition {
   toolsFor: (state: GameState, agent: AgentState) => GameTool[];
   // Resolve the phase that just finished and mutate state to the next phase.
   // Gets `emit` so resolution can announce deaths / reveals.
-  advancePhase: (state: GameState, emit: Emit) => void;
+  advancePhase: (state: GameState, emit: Emit) => void | Promise<void>;
   winner: (state: GameState) => string | null;
   systemPrompt: (state: GameState, agent: AgentState) => string;
   // Per-turn dynamic context (public log + this agent's private view). Optional;
