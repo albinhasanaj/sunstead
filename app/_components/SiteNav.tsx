@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const LINKS = [
   { href: "/explore", label: "Start Playing" },
@@ -11,6 +11,14 @@ const LINKS = [
 
 export function SiteNav() {
   const navRef = useRef<HTMLElement>(null);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   useEffect(() => {
     const target = document.getElementById("hero-gaming");
@@ -32,7 +40,13 @@ export function SiteNav() {
   }, []);
 
   return (
-    <header className="absolute inset-x-0 top-0 z-50">
+    <header
+      className={`fixed inset-x-0 top-0 z-50 transition-colors duration-300 ${
+        scrolled
+          ? "border-b border-[var(--hairline)] bg-stage/70 backdrop-blur-xl"
+          : "border-b border-transparent"
+      }`}
+    >
       <nav
         ref={navRef}
         className="mx-auto flex h-20 max-w-[92vw] items-center justify-between"
@@ -40,10 +54,9 @@ export function SiteNav() {
         <Link
           href="/"
           className="text-sm font-bold uppercase tracking-tight text-foreground"
-          aria-label="NAME HERE home"
+          aria-label="Adversary home"
         >
-          NAME HERE
-        </Link>
+Adversary        </Link>
 
         <div className="flex items-center gap-3 sm:gap-4">
           {LINKS.map((l) => (
