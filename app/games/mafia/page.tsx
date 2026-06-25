@@ -63,6 +63,9 @@ export default function Home() {
   const [protectedId, setProtectedId] = useState<string | null>(null); // who you (doctor) shielded
   const [killVotesByAgent, setKillVotesByAgent] = useState<Record<string, string>>({}); // mafia agentId → target id, this night
   const announcedTeamRef = useRef(false);
+  // Big transient death/elimination announcement banner.
+  const [announce, setAnnounce] = useState<{ name: string; sub: string } | null>(null);
+  const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -77,6 +80,12 @@ export default function Home() {
     } catch {
       /* ignore */
     }
+  }, []);
+
+  const showAnnounce = useCallback((name: string, sub: string) => {
+    setAnnounce({ name, sub });
+    if (announceTimer.current) clearTimeout(announceTimer.current);
+    announceTimer.current = setTimeout(() => setAnnounce(null), 4200);
   }, []);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -139,11 +148,13 @@ export default function Home() {
           // Hidden-role variant: mark them dead but keep their role secret.
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
           setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.` }]);
+          showAnnounce(nameOf(e.target), 'Killed in the night');
           playSfx('death');
           break;
         case 'reveal':
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
           setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.` }]);
+          showAnnounce(nameOf(e.target), 'Voted out by the table');
           playSfx('reveal');
           break;
         case 'vote':
@@ -186,7 +197,7 @@ export default function Home() {
           break;
       }
     },
-    [nameOf, voice, playSfx],
+    [nameOf, voice, playSfx, showAnnounce],
   );
 
   const start = useCallback(
@@ -205,6 +216,7 @@ export default function Home() {
       setTeammates([]);
       setProtectedId(null);
       setKillVotesByAgent({});
+      setAnnounce(null);
       announcedTeamRef.current = false;
       setMode(m);
       setRunning(true);
@@ -314,7 +326,13 @@ export default function Home() {
   const captionVisible = !!speakingId;
   const captionWho = speakingId ?? lastSpeak?.who ?? null;
 
-  useEffect(() => () => clearTimeout(speakTimerRef.current ?? undefined), []);
+  useEffect(
+    () => () => {
+      clearTimeout(speakTimerRef.current ?? undefined);
+      clearTimeout(announceTimer.current ?? undefined);
+    },
+    [],
+  );
 
   return (
     <main className="fixed inset-0 bg-black text-neutral-100 font-mono">
@@ -407,6 +425,30 @@ export default function Home() {
 
       {/* menu → gameplay transition (role reveal for play, cinematic for watch) */}
       {intro && <IntroOverlay mode={intro} role={myRole} onDone={() => setIntro(null)} />}
+
+      {/* dramatic death / elimination announcement */}
+      {announce && (
+        <div key={announce.name + announce.sub} className="pointer-events-none absolute inset-x-0 top-[20%] z-30 flex justify-center px-6">
+          <div className="death-banner flex flex-col items-center gap-3 rounded-2xl border border-red-500/30 bg-black/55 px-10 py-6 text-center shadow-2xl shadow-red-950/40 backdrop-blur-md">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.45em] text-red-300/80">{announce.sub}</span>
+            <span className="flex items-center gap-3 text-4xl font-bold tracking-tight text-red-50">
+              <PlayerFace name={announce.name} size={48} />
+              {announce.name}
+            </span>
+            <span className="text-xs uppercase tracking-[0.3em] text-neutral-400">is dead</span>
+          </div>
+          <style>{`
+            @keyframes deathBannerIn {
+              0% { opacity: 0; transform: translateY(-14px) scale(.92); }
+              12% { opacity: 1; transform: translateY(0) scale(1.03); }
+              22% { transform: scale(1); }
+              82% { opacity: 1; }
+              100% { opacity: 0; transform: translateY(-8px) scale(.98); }
+            }
+            .death-banner { animation: deathBannerIn 4.2s ease forwards; }
+          `}</style>
+        </div>
+      )}
 
       {/* fading lower-third caption: who's speaking, with their face + line.
           Click it (while visible) to open the full transcript. */}

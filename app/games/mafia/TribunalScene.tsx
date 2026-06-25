@@ -317,6 +317,9 @@ type Seat = {
   tagKey: string;
   baseColor: THREE.Color;
   alive: boolean;
+  deathAnim: number; // 0 = upright, 1 = fully collapsed
+  deathInit: boolean; // has the one-shot death effect (topple axis + soul burst) fired?
+  fallAxis: THREE.Vector3 | null; // axis the figure topples about
 };
 
 // What `phase × myRole × awake` should look like. This is the hidden-information
@@ -507,6 +510,41 @@ export default function TribunalScene(props: Props) {
       return new THREE.Vector3(s.pos.x, s.human ? 1.55 : 1.7, s.pos.z);
     }
 
+    // transient "soul" particle bursts, spawned on death
+    type Burst = { pts: THREE.Points; geom: THREE.BufferGeometry; mat: THREE.PointsMaterial; vel: Float32Array; age: number; ttl: number };
+    let bursts: Burst[] = [];
+    function spawnSoulBurst(seat: Seat) {
+      const N = 70;
+      const pos = new Float32Array(N * 3);
+      const vel = new Float32Array(N * 3);
+      for (let i = 0; i < N; i++) {
+        pos[i * 3] = seat.pos.x;
+        pos[i * 3 + 1] = 1.5 + Math.random() * 0.6;
+        pos[i * 3 + 2] = seat.pos.z;
+        const a = Math.random() * Math.PI * 2;
+        const out = 0.3 + Math.random() * 0.8;
+        vel[i * 3] = Math.cos(a) * out;
+        vel[i * 3 + 1] = 1.0 + Math.random() * 2.0; // mostly rising
+        vel[i * 3 + 2] = Math.sin(a) * out;
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      // pale, slightly brand-tinted soul
+      const col = seat.baseColor.clone().lerp(new THREE.Color(0xffffff), 0.55);
+      const mat = new THREE.PointsMaterial({ color: col, size: 0.13, transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending });
+      const pts = new THREE.Points(geom, mat);
+      scene.add(pts);
+      bursts.push({ pts, geom, mat, vel, age: 0, ttl: 1.7 });
+    }
+    function clearBursts() {
+      for (const b of bursts) {
+        scene.remove(b.pts);
+        b.geom.dispose();
+        b.mat.dispose();
+      }
+      bursts = [];
+    }
+
     function clearFigures() {
       for (const s of seats) {
         if (s.grp) scene.remove(s.grp);
@@ -514,6 +552,7 @@ export default function TribunalScene(props: Props) {
         if (s.ring) scene.remove(s.ring);
         s.tagMat?.map?.dispose(); // dynamic tag textures aren't tracked in `owned`
       }
+      clearBursts();
       for (const o of owned) o.dispose();
       owned = [];
       seats = [];
@@ -535,7 +574,7 @@ export default function TribunalScene(props: Props) {
 
         if (human) {
           // You ARE the camera — no figure, just a seat record so others look at you.
-          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, head: null, skull: null, skinMat: null, bodyMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', baseColor, alive: pl.alive };
+          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, head: null, skull: null, skinMat: null, bodyMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
           seats.push(seat);
           seatById.set(pl.id, seat);
           return;
@@ -593,7 +632,14 @@ export default function TribunalScene(props: Props) {
 
         owned.push(bustGeo, bodyMat, skullGeo, skinMat, skin, nameTex, labelMat, labelGeo, ringGeo, ringMat, tagGeo, tagMat);
 
-        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, head, skull, skinMat, bodyMat, ring, label, tag, tagMat, tagKey: '', baseColor, alive: pl.alive };
+        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, head, skull, skinMat, bodyMat, ring, label, tag, tagMat, tagKey: '', baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+        // a figure built already-dead (e.g. reconnect) starts collapsed, no replay
+        if (!pl.alive) {
+          const outward = new THREE.Vector3(x, 0, z).normalize();
+          seat.fallAxis = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), outward).normalize();
+          grp.quaternion.setFromAxisAngle(seat.fallAxis, Math.PI * 0.5);
+          grp.position.y = -0.12;
+        }
         seats.push(seat);
         seatById.set(pl.id, seat);
       });
@@ -611,17 +657,18 @@ export default function TribunalScene(props: Props) {
         if (!s) continue;
         const wasAlive = s.alive;
         s.alive = pl.alive;
-        if (!s.human && wasAlive && !pl.alive) {
-          // freshly dead → drain colour, dim the face, slump
-          s.bodyMat?.color.set(0x3a3d46);
-          if (s.skinMat) {
-            s.skinMat.color.set(0x6a6d76);
-            s.skinMat.emissiveIntensity = 0;
-          }
-        } else if (!s.human && !wasAlive && pl.alive) {
+        // Freshly dead → just flip the flag; the render loop plays the collapse +
+        // soul-burst + desaturation as a one-shot animation (deathInit/deathAnim).
+        if (!s.human && !wasAlive && pl.alive) {
           // (defensive) revived → restore
           s.bodyMat?.color.copy(s.baseColor);
           s.skinMat?.color.set(0xffffff);
+          s.deathAnim = 0;
+          s.deathInit = false;
+          if (s.grp) {
+            s.grp.quaternion.identity();
+            s.grp.position.set(s.pos.x, 0, s.pos.z);
+          }
         }
       }
     }
@@ -737,17 +784,35 @@ export default function TribunalScene(props: Props) {
         s.ring.visible = !hide;
         if (hide) continue;
 
-        // turn head toward the focal person; the focal person looks at the table
-        let yaw = s.bodyYaw;
-        if (focus && focus.id !== s.id) {
-          const tp = headWorld(focus);
-          yaw = Math.atan2(tp.x - s.pos.x, tp.z - s.pos.z);
+        // ── death: collapse + topple outward + a rising "soul" burst (one-shot) ──
+        if (!s.alive) {
+          if (!s.deathInit) {
+            s.deathInit = true;
+            const outward = new THREE.Vector3(s.pos.x, 0, s.pos.z).normalize();
+            s.fallAxis = new THREE.Vector3().crossVectors(UP, outward).normalize();
+            spawnSoulBurst(s);
+          }
+          if (s.deathAnim < 1) s.deathAnim = Math.min(1, s.deathAnim + 0.02);
+          const e = 1 - Math.pow(1 - s.deathAnim, 3); // easeOutCubic
+          if (s.fallAxis) s.grp.quaternion.setFromAxisAngle(s.fallAxis, e * Math.PI * 0.5);
+          s.grp.position.set(s.pos.x, -e * 0.12, s.pos.z);
+          s.head.rotation.x = lerpNum(s.head.rotation.x, 0.6, 0.12); // head lolls
+          if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, 0, 0.12);
+          // desaturate body + head as they fall
+          if (s.bodyMat) s.bodyMat.color.lerp(cAmb.set(0x3a3d46), 0.08);
+          if (s.skinMat) s.skinMat.color.lerp(cLamp.set(0x6a6d76), 0.08);
+        } else {
+          // turn head toward the focal person; the focal person looks at the table
+          let yaw = s.bodyYaw;
+          if (focus && focus.id !== s.id) {
+            const tp = headWorld(focus);
+            yaw = Math.atan2(tp.x - s.pos.x, tp.z - s.pos.z);
+          }
+          s.head.rotation.y = lerpAngle(s.head.rotation.y, yaw, 0.07);
         }
-        s.head.rotation.y = lerpAngle(s.head.rotation.y, yaw, 0.07);
 
         const talking = !p.accusedId && p.speakingId === s.id && s.alive;
-        const slump = s.alive ? 0 : 0.55;
-        s.head.rotation.x = lerpNum(s.head.rotation.x, talking ? Math.sin(t * 34) * 0.05 : slump, 0.18);
+        if (s.alive) s.head.rotation.x = lerpNum(s.head.rotation.x, talking ? Math.sin(t * 34) * 0.05 : 0, 0.18);
 
         const glowI = talking ? 0.45 + Math.sin(t * 18) * 0.2 : p.accusedId === s.id ? 0.5 : 0;
         if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, glowI, 0.12);
@@ -774,9 +839,6 @@ export default function TribunalScene(props: Props) {
           rm.color.set(0x2a3148);
           rm.opacity = 0.22;
         }
-
-        // dead bodies desaturate continuously (in case state synced after build)
-        if (!s.alive && s.bodyMat) s.bodyMat.color.lerp(cAmb.set(0x3a3d46), 0.1);
 
         // billboard the name label toward the camera
         s.label.rotation.y = Math.atan2(camera.position.x - s.label.position.x, camera.position.z - s.label.position.z);
@@ -806,6 +868,27 @@ export default function TribunalScene(props: Props) {
             const pulse = 1 + Math.sin(t * 9) * 0.05;
             s.tag.scale.set(pulse, pulse, 1);
           }
+        }
+      }
+
+      // advance soul bursts (rise, slow, fade), retiring expired ones
+      for (let bi = bursts.length - 1; bi >= 0; bi--) {
+        const b = bursts[bi];
+        b.age += 0.016;
+        const ba = b.geom.attributes.position.array as Float32Array;
+        for (let j = 0; j < b.vel.length; j += 3) {
+          ba[j] += b.vel[j] * 0.016;
+          ba[j + 1] += b.vel[j + 1] * 0.016;
+          ba[j + 2] += b.vel[j + 2] * 0.016;
+          b.vel[j + 1] -= 1.1 * 0.016; // ease the rise
+        }
+        b.geom.attributes.position.needsUpdate = true;
+        b.mat.opacity = Math.max(0, 0.95 * (1 - b.age / b.ttl));
+        if (b.age >= b.ttl) {
+          scene.remove(b.pts);
+          b.geom.dispose();
+          b.mat.dispose();
+          bursts.splice(bi, 1);
         }
       }
 
