@@ -6,7 +6,6 @@ import { UserButton } from "./UserButton";
 
 const NAV = [
   { href: "/explore", label: "Explore" },
-  { href: "/stats", label: "Stats" },
 ] as const;
 
 export function AppHeader() {
