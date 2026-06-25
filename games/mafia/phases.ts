@@ -19,7 +19,7 @@ const DISCUSSION_ROUNDS = 2;
 export function nextSpeaker(state: GameState): PlayerId | null {
   if (state.phase !== PHASE.DISCUSSION) return null;
   const living = alive(state);
-  const meta = state.meta as any;
+  const meta = state.meta; // Record<string, any> — per-discussion scratch lives here
 
   // Per-discussion state, re-initialised each round (discussion runs once/round).
   if (!meta.disc || meta.disc.round !== state.round) {
@@ -77,7 +77,7 @@ function eagerness(p: AgentState, recent: { speaker: PlayerId; text: string }[],
 // Returns null if no AI is available to step in.
 export function mostEagerSpeaker(state: GameState, excludeIds: PlayerId[] = []): PlayerId | null {
   if (state.phase !== PHASE.DISCUSSION) return null;
-  const d = (state.meta as any).disc;
+  const d = state.meta.disc; // per-discussion state seeded by nextSpeaker
   if (!d) return null;
   const spoke: Record<PlayerId, number> = d.spoke ?? {};
   const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2);

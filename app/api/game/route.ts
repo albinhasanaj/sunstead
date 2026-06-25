@@ -4,7 +4,7 @@ import { takeTurn } from '@/engine/agent';
 import { mafiaGame } from '@/games/mafia';
 import { mostEagerSpeaker } from '@/games/mafia/phases';
 import type { AgentState, GameEvent, GameState, GameTool } from '@/engine/types';
-import { sessions, type GameSession } from '@/lib/gameSessions';
+import { sessions, type GameSession, type HumanChoice } from '@/lib/gameSessions';
 
 // Idle "speaking pressure". While the human holds the DISCUSSION floor but stays
 // silent, the most eager AI jumps in every IDLE_MS so the table never goes dead.
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
       // silence so the table never freezes while the human is thinking.
       const controller_: HumanController = {
         decide(state, agent, tools) {
-          const humanChoice = new Promise<{ tool: string; args: any } | null>((resolve) => {
+          const humanChoice = new Promise<HumanChoice>((resolve) => {
             session.pending = { agentId: agent.id, resolve };
             send(requestAction(state, agent, tools));
           });
@@ -119,8 +119,8 @@ export async function POST(req: Request) {
       async function fillSilenceWhileIdle(
         state: GameState,
         human: AgentState,
-        humanChoice: Promise<{ tool: string; args: any } | null>,
-      ): Promise<{ tool: string; args: any } | null> {
+        humanChoice: Promise<HumanChoice>,
+      ): Promise<HumanChoice> {
         const IDLE = Symbol('idle');
         for (let fills = 0; fills < IDLE_MAX; fills++) {
           let timer: ReturnType<typeof setTimeout> | undefined;
