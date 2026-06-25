@@ -65,7 +65,7 @@ export function GoogleButton({
       onClick={handleClick}
       disabled={busy}
       style={plain ? undefined : { backgroundColor: "var(--collision)" }}
-      className={`group inline-flex items-center justify-center rounded-full font-semibold transition disabled:cursor-wait disabled:opacity-80 ${tone} ${pad} ${className}`}
+      className={`group inline-flex cursor-pointer items-center justify-center rounded-full font-semibold transition disabled:cursor-wait disabled:opacity-80 ${tone} ${pad} ${className}`}
     >
       {!plain && (
         <span className={`flex items-center justify-center rounded-full bg-white/95 ${glyph}`}>

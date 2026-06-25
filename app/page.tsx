@@ -72,7 +72,7 @@ export default function Landing() {
           </span>
         </h1>
 
-        <div className="fade-up relative mt-10" style={{ animationDelay: "120ms" }}>
+        <div className="fade-up relative mt-10 cursor-pointer" style={{ animationDelay: "120ms" }}>
           <GoogleButton variant="plain" label="Start Playing" />
         </div>
       </section>

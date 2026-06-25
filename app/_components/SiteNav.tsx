@@ -1,17 +1,31 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { useAuth } from "./AuthProvider";
 
 const LINKS = [
   { href: "/#what", label: "About" },
   { href: "/explore", label: "Explore Games" },
-  { href: "/onboarding", label: "Log in" },
 ] as const;
 
 export function SiteNav() {
   const navRef = useRef<HTMLElement>(null);
   const [scrolled, setScrolled] = useState(false);
+  const { signedIn, hasProfile, signInWithGoogle } = useAuth();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+
+  const handleLogin = () => {
+    if (busy) return;
+    setBusy(true);
+    if (!signedIn) signInWithGoogle();
+    // Mirror the homepage Google button: brief round-trip, then route by profile.
+    setTimeout(() => {
+      router.push(hasProfile ? "/explore" : "/onboarding");
+    }, 650);
+  };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -68,6 +82,17 @@ Adversary        </Link>
               {l.label}
             </Link>
           ))}
+          <button
+            type="button"
+            onClick={handleLogin}
+            disabled={busy}
+            className="inline-flex cursor-pointer items-center gap-2 text-sm font-bold uppercase text-neutral-300 transition-colors hover:text-foreground disabled:cursor-wait disabled:text-neutral-500"
+          >
+            {busy && (
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-neutral-500 border-t-foreground" />
+            )}
+            {busy ? "Signing in…" : signedIn && hasProfile ? "Enter" : "Log in"}
+          </button>
         </div>
       </nav>
     </header>

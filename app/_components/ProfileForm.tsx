@@ -99,7 +99,7 @@ export function ProfileForm({
               key={value}
               type="button"
               onClick={() => setMode(value)}
-              className={`rounded-full px-4 py-1.5 text-sm transition ${
+              className={`cursor-pointer rounded-full px-4 py-1.5 text-sm transition ${
                 mode === value ? "bg-foreground text-stage" : "text-muted hover:text-foreground"
               }`}
             >
@@ -121,7 +121,7 @@ export function ProfileForm({
                 <button
                   type="button"
                   onClick={() => setPhoto(null)}
-                  className="rounded-full border border-[var(--hairline)] px-5 py-2 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
+                  className="cursor-pointer rounded-full border border-[var(--hairline)] px-5 py-2 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
                 >
                   Retake photo
                 </button>
@@ -143,7 +143,7 @@ export function ProfileForm({
                     type="button"
                     onClick={() => setColor(c)}
                     aria-label={`color ${c}`}
-                    className={`h-9 w-9 rounded-full ring-2 ring-offset-2 ring-offset-stage transition ${
+                    className={`h-9 w-9 cursor-pointer rounded-full ring-2 ring-offset-2 ring-offset-stage transition ${
                       color === c ? "ring-foreground" : "ring-transparent hover:ring-white/30"
                     }`}
                     style={{ backgroundColor: c, boxShadow: `0 0 18px -4px ${c}` }}
@@ -162,7 +162,7 @@ export function ProfileForm({
                     key={em}
                     type="button"
                     onClick={() => setEmoji(em)}
-                    className={`flex h-10 w-10 items-center justify-center rounded-xl border text-lg transition ${
+                    className={`flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl border text-lg transition ${
                       emoji === em
                         ? "border-foreground bg-white/10"
                         : "border-[var(--hairline)] bg-stage hover:border-white/30"
@@ -195,7 +195,7 @@ export function ProfileForm({
           type="submit"
           disabled={!valid}
           style={{ backgroundColor: "var(--collision)" }}
-          className="inline-flex items-center justify-center rounded-full px-6 py-3 text-sm font-semibold text-white shadow-[0_0_30px_-8px_var(--collision)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex cursor-pointer items-center justify-center rounded-full px-6 py-3 text-sm font-semibold text-white shadow-[0_0_30px_-8px_var(--collision)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {submitLabel}
         </button>
@@ -203,7 +203,7 @@ export function ProfileForm({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-full border border-[var(--hairline)] px-6 py-3 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
+            className="cursor-pointer rounded-full border border-[var(--hairline)] px-6 py-3 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
           >
             Cancel
           </button>

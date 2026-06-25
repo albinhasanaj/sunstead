@@ -80,7 +80,7 @@ export default function ProfilePage() {
                 <button
                   type="button"
                   onClick={() => setEditing(true)}
-                  className="rounded-full bg-foreground px-6 py-3 text-sm font-semibold text-stage transition hover:brightness-90"
+                  className="cursor-pointer rounded-full bg-foreground px-6 py-3 text-sm font-semibold text-stage transition hover:brightness-90"
                 >
                   Edit profile
                 </button>
@@ -90,7 +90,7 @@ export default function ProfilePage() {
                     signOut();
                     router.replace("/");
                   }}
-                  className="rounded-full border border-[var(--hairline)] px-6 py-3 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
+                  className="cursor-pointer rounded-full border border-[var(--hairline)] px-6 py-3 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
                 >
                   Sign out
                 </button>

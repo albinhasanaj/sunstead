@@ -38,7 +38,7 @@ export function UserButton() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Account menu"
-        className="flex rounded-full outline-none transition-transform duration-200 hover:scale-[1.04] focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-stage"
+        className="flex cursor-pointer rounded-full outline-none transition-transform duration-200 hover:scale-[1.04] focus-visible:ring-2 focus-visible:ring-white/40 focus-visible:ring-offset-2 focus-visible:ring-offset-stage"
       >
         <Avatar profile={profile} size="sm" className={open ? "ring-white/50" : ""} />
       </button>
@@ -79,7 +79,7 @@ export function UserButton() {
                 signOut();
                 router.replace("/");
               }}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-muted transition-colors hover:bg-white/[0.06] hover:text-foreground"
+              className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-muted transition-colors hover:bg-white/[0.06] hover:text-foreground"
             >
               <SignOutIcon />
               Sign out

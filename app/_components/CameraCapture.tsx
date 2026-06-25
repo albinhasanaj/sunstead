@@ -91,14 +91,14 @@ export function CameraCapture({ onCapture }: { onCapture: (dataUrl: string) => v
             <button
               type="button"
               onClick={capture}
-              className="rounded-full bg-foreground px-6 py-2.5 text-sm font-semibold text-stage transition hover:brightness-90"
+              className="cursor-pointer rounded-full bg-foreground px-6 py-2.5 text-sm font-semibold text-stage transition hover:brightness-90"
             >
               Capture
             </button>
             <button
               type="button"
               onClick={stop}
-              className="rounded-full border border-[var(--hairline)] px-6 py-2.5 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
+              className="cursor-pointer rounded-full border border-[var(--hairline)] px-6 py-2.5 text-sm text-muted transition hover:border-white/30 hover:text-foreground"
             >
               Cancel
             </button>
@@ -108,7 +108,7 @@ export function CameraCapture({ onCapture }: { onCapture: (dataUrl: string) => v
             type="button"
             onClick={start}
             disabled={starting}
-            className="rounded-full border border-[var(--hairline)] px-6 py-2.5 text-sm text-foreground transition hover:border-white/30 disabled:opacity-50"
+            className="cursor-pointer rounded-full border border-[var(--hairline)] px-6 py-2.5 text-sm text-foreground transition hover:border-white/30 disabled:cursor-default disabled:opacity-50"
           >
             {starting ? "Starting…" : error ? "Try again" : "Start camera"}
           </button>
