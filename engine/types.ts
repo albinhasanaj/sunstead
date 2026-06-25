@@ -47,6 +47,12 @@ export interface GameDefinition {
   // multi-round phases like discussion):
   turnOrder: (state: GameState) => PlayerId[];
   toolsFor: (state: GameState, agent: AgentState) => GameTool[];
+  // Optional: phases whose speaking order is decided dynamically per beat (e.g. a
+  // reactive discussion where whoever is most motivated speaks next) instead of a
+  // precomputed turnOrder. For such phases the engine repeatedly calls nextSpeaker
+  // until it returns null.
+  beatPhases?: string[];
+  nextSpeaker?: (state: GameState) => PlayerId | null;
   // Resolve the phase that just finished and mutate state to the next phase.
   // Gets `emit` so resolution can announce deaths / reveals.
   advancePhase: (state: GameState, emit: Emit) => void | Promise<void>;
@@ -69,6 +75,7 @@ export type GameEvent =
   | { type: 'setup'; players: { id: PlayerId; name: string; role: string; model?: string }[]; phase: string; round: number }
   | { type: 'phase'; phase: string; round: number }
   | { type: 'beliefs'; agent: PlayerId; suspicions: Record<PlayerId, number>; reasoning: string }
+  | { type: 'thinking'; agent: PlayerId; on: boolean } // seat is mid-deliberation — for a "thinking…" UI and to visualise concurrent thinking
   | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string }
   | { type: 'whisper'; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)
   | { type: 'action'; agent: PlayerId; kind: string; target?: PlayerId }
