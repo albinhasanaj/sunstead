@@ -32,13 +32,27 @@ export async function runGame(
   while (def.winner(state) === null && guard++ < 100) {
     emit({ type: 'phase', phase: state.phase, round: state.round });
 
-    for (const id of def.turnOrder(state)) {
-      const agent = state.players.find((p) => p.id === id);
-      if (!agent || !agent.alive) continue;
-      await turnFn(def, state, agent, emit);
-      // A turn may have ended the game (e.g. last villager voted out mid-tally).
-      if (def.winner(state) !== null) break;
-      if (turnDelayMs) await sleep(turnDelayMs);
+    // Reactive phases (e.g. discussion): the game picks the next speaker per beat
+    // based on who's most motivated, so the table feels alive instead of round-robin.
+    if (def.beatPhases?.includes(state.phase) && def.nextSpeaker) {
+      let id: string | null;
+      while ((id = def.nextSpeaker(state)) !== null) {
+        const agent = state.players.find((p) => p.id === id);
+        if (agent && agent.alive) {
+          await turnFn(def, state, agent, emit);
+          if (def.winner(state) !== null) break;
+          if (turnDelayMs) await sleep(turnDelayMs);
+        }
+      }
+    } else {
+      for (const id of def.turnOrder(state)) {
+        const agent = state.players.find((p) => p.id === id);
+        if (!agent || !agent.alive) continue;
+        await turnFn(def, state, agent, emit);
+        // A turn may have ended the game (e.g. last villager voted out mid-tally).
+        if (def.winner(state) !== null) break;
+        if (turnDelayMs) await sleep(turnDelayMs);
+      }
     }
 
     if (def.winner(state) !== null) break;

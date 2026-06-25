@@ -12,6 +12,43 @@ export const PHASES = [PHASE.NIGHT, PHASE.DISCUSSION, PHASE.VOTE];
 
 const DISCUSSION_ROUNDS = 2;
 
+// Phase 1 concurrency: instead of a fixed seat order, pick the next discussion
+// speaker per beat from a cheap heuristic "eagerness" — so whoever was just
+// accused/named jumps in to respond, quieter players get pulled in, and nobody
+// speaks twice in a row. No extra LLM calls: only the chosen speaker generates.
+export function nextSpeaker(state: GameState): PlayerId | null {
+  if (state.phase !== PHASE.DISCUSSION) return null;
+  const living = alive(state);
+  const meta = state.meta as any;
+
+  // Per-discussion state, re-initialised each round (discussion runs once/round).
+  if (!meta.disc || meta.disc.round !== state.round) {
+    meta.disc = { round: state.round, beat: 0, budget: living.length * DISCUSSION_ROUNDS, spoke: {} as Record<PlayerId, number>, last: null as PlayerId | null };
+  }
+  const d = meta.disc;
+  if (d.beat >= d.budget) return null;
+
+  const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2);
+
+  let bestId: PlayerId | null = null;
+  let bestScore = -Infinity;
+  for (const p of living) {
+    if (p.id === d.last) continue; // never speak twice in a row
+    let s = 0.1 + Math.random() * 0.15;
+    s += 0.25 * Math.max(0, 2 - (d.spoke[p.id] ?? 0)); // pull in quieter players
+    // addressed/named by someone else in the last couple of lines → wants to reply
+    if (recent.some((l) => l.speaker !== p.id && l.text.toLowerCase().includes(p.name.toLowerCase()))) s += 0.6;
+    if (p.private.human) s += 0.5; // make sure a human is regularly offered the floor
+    if (s > bestScore) { bestScore = s; bestId = p.id; }
+  }
+  if (bestId) {
+    d.beat += 1;
+    d.spoke[bestId] = (d.spoke[bestId] ?? 0) + 1;
+    d.last = bestId;
+  }
+  return bestId;
+}
+
 const alive = (s: GameState) => s.players.filter((p) => p.alive);
 const aliveMafia = (s: GameState) => alive(s).filter((p) => isMafia(p.role));
 const nameOf = (s: GameState, id: PlayerId) => s.players.find((p) => p.id === id)?.name ?? id;

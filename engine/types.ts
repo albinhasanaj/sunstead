@@ -47,6 +47,12 @@ export interface GameDefinition {
   // multi-round phases like discussion):
   turnOrder: (state: GameState) => PlayerId[];
   toolsFor: (state: GameState, agent: AgentState) => GameTool[];
+  // Optional: phases whose speaking order is decided dynamically per beat (e.g. a
+  // reactive discussion where whoever is most motivated speaks next) instead of a
+  // precomputed turnOrder. For such phases the engine repeatedly calls nextSpeaker
+  // until it returns null.
+  beatPhases?: string[];
+  nextSpeaker?: (state: GameState) => PlayerId | null;
   // Resolve the phase that just finished and mutate state to the next phase.
   // Gets `emit` so resolution can announce deaths / reveals.
   advancePhase: (state: GameState, emit: Emit) => void | Promise<void>;

@@ -1,7 +1,7 @@
 import type { AgentState, GameDefinition, GameState } from '../../engine/types';
 import { recall } from '../../lib/memory';
 import { DEFAULT_ROSTER, FALLBACK_MODEL, personalityByName, roleDistribution } from './roles';
-import { PHASE, PHASES, turnOrder, advancePhase } from './phases';
+import { PHASE, PHASES, turnOrder, advancePhase, nextSpeaker } from './phases';
 import { toolsFor } from './tools';
 import { winner } from './winCondition';
 import { systemPrompt, renderContext } from './prompts';
@@ -93,6 +93,9 @@ export const mafiaGame: GameDefinition = {
   systemPrompt,
   renderContext,
   recallForTurn,
+  // Reactive discussion (Phase 1 concurrency); set MAFIA_DISCUSSION=classic to
+  // fall back to fixed seat order.
+  ...(process.env.MAFIA_DISCUSSION !== 'classic' ? { beatPhases: [PHASE.DISCUSSION], nextSpeaker } : {}),
   // Per-seat models come from each personality; this is only the fallback for a
   // seat with no model of its own. A game-wide override is still possible via env.
   model: process.env.MAFIA_MODEL || FALLBACK_MODEL,
