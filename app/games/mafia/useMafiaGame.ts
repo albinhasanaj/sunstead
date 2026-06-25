@@ -83,7 +83,23 @@ export function useMafiaGame() {
   // Live humanId for the (deps-light) event handler, so it can tell your own line apart.
   const humanIdRef = useRef<string | null>(null);
   humanIdRef.current = humanId;
+  // Live gameId, so the control-POST helpers below stay stable (no deps) and can be
+  // called from the voice queue's listeners without going stale across games.
+  const gameIdRef = useRef<string | null>(null);
+  gameIdRef.current = gameId;
   const nameOf = useCallback((id: string) => playersRef.current.find((p) => p.id === id)?.name ?? id, []);
+
+  const postControl = useCallback((body: Record<string, unknown>) => {
+    const id = gameIdRef.current;
+    if (!id) return;
+    fetch('/api/game/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gameId: id, ...body }) }).catch(() => {});
+  }, []);
+  // Tell the loop a line finished voicing → it may advance to the next AI beat (this
+  // is what paces AI talk to the audio instead of racing ahead).
+  const ackVoiceDone = useCallback(() => postControl({ control: 'voiceDone' }), [postControl]);
+  // Tell the loop you're actively composing (mic held / typing) → it holds the floor
+  // for you and won't let an AI take over until you send or stop.
+  const signalComposing = useCallback(() => postControl({ control: 'composing' }), [postControl]);
 
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -110,10 +126,11 @@ export function useMafiaGame() {
       },
       onEnd: (item) => {
         setSpeakingId((cur) => (cur === item.id ? null : cur));
+        ackVoiceDone(); // a voiced AI line just finished → let the loop play the next beat
       },
       onIdle: (v) => setVoiceIdle(v),
     });
-  }, [voice]);
+  }, [voice, ackVoiceDone]);
 
   const handle = useCallback(
     (e: any) => {
@@ -161,10 +178,10 @@ export function useMafiaGame() {
             setSpeakingId(e.agent);
             setSpeakingLine({ who: e.agent, text: e.text });
             if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
-            speakTimerRef.current = setTimeout(
-              () => setSpeakingId((cur) => (cur === e.agent ? null : cur)),
-              Math.max(2000, (e.text?.length ?? 0) * 60),
-            );
+            speakTimerRef.current = setTimeout(() => {
+              setSpeakingId((cur) => (cur === e.agent ? null : cur));
+              if (!isHuman) ackVoiceDone(); // muted: pace the next AI beat to reading speed
+            }, Math.max(2000, (e.text?.length ?? 0) * 60));
           }
           break;
         }
@@ -249,7 +266,7 @@ export function useMafiaGame() {
           break;
       }
     },
-    [nameOf, voice, playSfx, showAnnounce],
+    [nameOf, voice, playSfx, showAnnounce, ackVoiceDone],
   );
 
   const start = useCallback(
@@ -408,9 +425,12 @@ export function useMafiaGame() {
         addresseeName && !text.toLowerCase().startsWith(addresseeName.toLowerCase())
           ? `${addresseeName}, ${text}`
           : text;
-      submitAction('speak', { text: directed });
+      // Real-time interjection: hand the line straight to the loop, which injects it
+      // at the next beat boundary so the AIs react to it. The server echoes it back as
+      // a speak event, so it shows in the transcript like any other line.
+      postControl({ control: 'say', tool: 'speak', args: { text: directed } });
     },
-    [addresseeName, submitAction],
+    [addresseeName, postControl],
   );
 
   // Mafia private channel — your allies + the targets they've silently picked.
@@ -552,5 +572,6 @@ export function useMafiaGame() {
     skipTurn,
     requestSkipDiscussion,
     sendSpeech,
+    signalComposing,
   };
 }

@@ -67,11 +67,18 @@ last line jumps in *even unnamed*, a quieter seat breaks into a two-person duel
   seat's *own* model for a genuine 1-token "hand-raise" before picking (one request
   per silent seat per beat — too many for the free tier's rate limits).
 
-In **play** mode, when you hold the discussion floor but stay quiet, the most
-eager AI jumps in so the table never goes dead — the same auction, on a timer:
+In **play** mode you're not a scheduled seat — you **interject in real time**. The AIs
+talk among themselves (the auction above) but their beats **pace to your voice**: after
+each line the loop waits for the client to finish voicing it before the next, so the
+table never runs ahead of what you hear. Speak whenever (hold the mic / type) and your
+line is folded in at the next beat so the AIs react to *it* — you're always first
+priority, and while you're composing no AI takes the floor.
 
-- `MAFIA_IDLE_MS=18000` — how long your silence lasts before an AI fills it.
-- `MAFIA_IDLE_MAX=3` — fill-ins before your turn auto-passes (you can speak any time).
+- `MAFIA_PACE_MAX_MS=14000` — safety cap on how long a beat waits for the voice ack.
+
+Mechanics: the client posts `voiceDone` (line finished voicing), `composing` (mic/typing
+heartbeat), and `say` (your line) to `/api/game/action`; the SSE loop's `beatHook`
+([app/api/game/route.ts](app/api/game/route.ts)) paces + injects accordingly.
 
 Prompt caching is on (`caching: 'auto'`, AI Gateway v4 — needs `ai@7`): the stable
 system + transcript prefix is cached, cheaper + faster. Measured on the free tier it

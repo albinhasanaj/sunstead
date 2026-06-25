@@ -45,7 +45,6 @@ export default function Home() {
     voiceOn,
     setVoiceOn,
     speakingId,
-    voiceIdle,
     thinkingIds,
     findings,
     teammates,
@@ -60,7 +59,6 @@ export default function Home() {
     myRole,
     myTurn,
     inDiscussion,
-    discussionTurn,
     showBar,
     addresseeName,
     showMafiaChannel,
@@ -75,6 +73,7 @@ export default function Home() {
     skipTurn,
     requestSkipDiscussion,
     sendSpeech,
+    signalComposing,
   } = useMafiaGame();
 
   return (
@@ -224,20 +223,17 @@ export default function Home() {
         <VoiceDock
           voiceOn={voiceOn}
           onToggleVoice={() => setVoiceOn((v) => !v)}
-          active={!!discussionTurn && (!voiceOn || voiceIdle)}
-          waiting={!!discussionTurn && voiceOn && !voiceIdle}
+          // Real-time interjection: during discussion you can speak whenever — no
+          // waiting for a turn. The loop folds your line in and the AIs react to it.
+          active={inDiscussion}
+          waiting={false}
           phaseLabel={
-            inDiscussion
-              ? 'the table is talking…'
-              : phase?.phase === 'NIGHT'
-                ? 'the night is silent'
-                : phase?.phase === 'VOTE'
-                  ? 'the table is voting…'
-                  : ''
+            phase?.phase === 'NIGHT' ? 'the night is silent' : phase?.phase === 'VOTE' ? 'the table is voting…' : ''
           }
           speaking={!!speakingId}
           addresseeName={addresseeName}
           onSend={sendSpeech}
+          onComposing={signalComposing}
         />
       )}
 

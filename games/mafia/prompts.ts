@@ -147,8 +147,22 @@ function instruction(state: GameState, agent: AgentState): string {
       if (agent.role === ROLE.DOCTOR)
         return 'It is night. Call update_beliefs, then protect one player.';
       return 'It is night — you sleep.';
-    case PHASE.DISCUSSION:
-      return 'It is open discussion. Call update_beliefs, then take ONE action: speak, accuse, defend, or claim_role. Be persuasive and in-character.';
+    case PHASE.DISCUSSION: {
+      // The dead are OUT of the game. Without this, agents fixate on (or "accuse")
+      // last night's victim — nonsensical, since you can only suspect/vote the living.
+      const dead = state.players.filter((p) => !p.alive).map((p) => p.name);
+      const deadLine = dead.length
+        ? ` Already dead and OUT of the game: ${dead.join(', ')} — they are victims, not suspects, so never accuse, address, or pin suspicion on them. Reason only about LIVING players, and ask who killed them.`
+        : '';
+      // First to speak after dawn (last public line is the narrator's)? You are
+      // opening — lead with a real read, don't react as if others already spoke.
+      const log = state.publicLog;
+      const opener = log.length > 0 && log[log.length - 1].speaker === 'system';
+      const openLine = opener
+        ? ' No one has spoken yet — you are opening the discussion, so lead with a concrete read of the living, not "what does everyone think?".'
+        : '';
+      return `It is open discussion. Call update_beliefs, then take ONE action: speak, accuse, defend, or claim_role. Be persuasive and in-character.${deadLine}${openLine}`;
+    }
     case PHASE.VOTE:
       return 'It is time to vote. Call update_beliefs, then vote to eliminate exactly one living player.';
     default:

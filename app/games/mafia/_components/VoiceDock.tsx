@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePushToTalk } from '../usePushToTalk';
 
 // ── Bottom-center voice dock ─────────────────────────────────────────────────
@@ -17,15 +17,17 @@ export default function VoiceDock({
   speaking,
   addresseeName,
   onSend,
+  onComposing,
 }: {
   voiceOn: boolean;
   onToggleVoice: () => void;
-  active: boolean; // your discussion turn AND the table has finished talking → enabled
-  waiting: boolean; // your turn, but holding until the spoken backlog finishes
-  phaseLabel: string; // hint shown when it isn't your turn
+  active: boolean; // discussion + alive → you can speak (real-time, no turn to wait for)
+  waiting: boolean; // unused now (kept for layout symmetry); always false
+  phaseLabel: string; // hint shown when you can't speak (night/vote)
   speaking: boolean; // table is voicing a line → animate the orb
   addresseeName: string | null;
   onSend: (text: string) => void;
+  onComposing: () => void; // heartbeat while you're recording/typing → the loop holds the floor for you
 }) {
   const [textMode, setTextMode] = useState(false);
   const [text, setText] = useState('');
@@ -42,6 +44,16 @@ export default function VoiceDock({
   const recording = ptt.status === 'recording';
   const transcribing = ptt.status === 'transcribing';
   const live = recording || transcribing || speaking;
+
+  // While you're actively composing (mic held, transcribing, or typing), heartbeat the
+  // loop so it holds the floor for you — no AI takes over until you send or stop.
+  const composing = active && (recording || transcribing || (textMode && !!text.trim()));
+  useEffect(() => {
+    if (!composing) return;
+    onComposing();
+    const iv = setInterval(onComposing, 3000);
+    return () => clearInterval(iv);
+  }, [composing, onComposing]);
   const accent = recording ? '#f0586a' : active ? '#f0b54a' : '#8b93a8';
 
   const sendText = () => {
