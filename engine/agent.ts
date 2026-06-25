@@ -34,7 +34,20 @@ export async function takeTurn(
     ]),
   );
 
-  const context = (def.renderContext ?? defaultRenderContext)(state, agent);
+  const baseContext = (def.renderContext ?? defaultRenderContext)(state, agent);
+
+  // Long-term memory: let the game pull similar prior statements (pgvector via the
+  // Aiven MCP) and inject a contradiction-spotting block before the agent reasons.
+  // Memory must never break a turn, so any failure is swallowed.
+  let prompt = baseContext;
+  if (def.recallForTurn) {
+    try {
+      const mem = await def.recallForTurn(state, agent);
+      if (mem) prompt = `${baseContext}\n\n${mem}`;
+    } catch (err) {
+      console.error(`[agent ${agent.name}] recall failed:`, (err as Error).message);
+    }
+  }
 
   // Each seat can run on its own model (any AI Gateway string); fall back to the
   // game-wide model, then the engine default.
@@ -44,7 +57,7 @@ export async function takeTurn(
     generateText({
       model: m, // routed via AI Gateway (AI_GATEWAY_API_KEY)
       system: def.systemPrompt(state, agent),
-      prompt: context,
+      prompt,
       tools,
       // 'required' forces genuine tool use; with stepCountIs(2) the agent makes
       // exactly two calls per turn: update_beliefs, then one game action.

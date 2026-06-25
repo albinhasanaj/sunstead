@@ -103,4 +103,7 @@ pnpm typecheck
       Generated audio is cached in-process (one bed + 4 cues ≈ a few credits total).
 - [x] **Phase 6 — human voice-in**: push-to-talk → ElevenLabs Scribe STT → your
       move (`voice/stt.ts`, `app/api/stt`, `usePushToTalk`). Hold 🎤 on your turn.
-- [ ] Phase 7 — Detective / Doctor roles (tools + resolution already stubbed in).
+- [x] **Phase 7 — Detective / Doctor**: dealt in for 5+/6+ player tables. Detective
+      investigates (private `knowledge` events, fog-of-war redacted in play mode);
+      Doctor protects (cancels the night kill). Human special roles get night-action
+      pickers in the UI. Default table is now 6 (2 Mafia + Detective + Doctor + 2 Villagers).

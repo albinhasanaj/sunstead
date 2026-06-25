@@ -74,6 +74,7 @@ export async function POST(req: Request) {
           names,
           emit,
           (state: GameState) => {
+            state.meta.gameId = gameId; // align long-term memory with this SSE session
             if (mode === 'play') {
               const h = state.players.find((p) => p.name === HUMAN_NAME);
               if (h) {

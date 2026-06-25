@@ -55,6 +55,9 @@ export interface GameDefinition {
   // Per-turn dynamic context (public log + this agent's private view). Optional;
   // the engine supplies a generic default when omitted.
   renderContext?: (state: GameState, agent: AgentState) => string;
+  // Optional async hook run before each AI turn: returns extra prompt text (e.g.
+  // long-term memory recalled via pgvector) to append, or null. May perform I/O.
+  recallForTurn?: (state: GameState, agent: AgentState) => Promise<string | null>;
   // The model string for agent decisions, routed via the AI Gateway.
   model?: string;
   // If a seat's own model fails (e.g. rate-limited), retry the turn once on this

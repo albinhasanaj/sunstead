@@ -30,6 +30,7 @@ async function main() {
   const winner = await runGame(mafiaGame, names, bus.emit, (state) => {
     // Bind the terminal renderer now that players (and their names) exist.
     bus.on(terminalRenderer(state));
+    console.log(`Memory game id (Aiven pgvector): ${state.meta.gameId}`);
     console.log('Secret roster (you wouldn\'t normally see this):');
     for (const p of state.players) {
       console.log(`  ${p.name.padEnd(10)} ${String(p.role).padEnd(9)} ${p.private.model}`);
