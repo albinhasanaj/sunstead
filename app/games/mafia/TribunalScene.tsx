@@ -33,6 +33,10 @@ export type Props = {
   turn: any | null; // raw request_action payload, or null
   onSelect: (playerId: string) => void;
   onAction: (tool: string, args: any) => void;
+  // your private, role-specific knowledge — rendered as obvious overhead tags
+  findings?: Record<string, 'mafia' | 'town'>; // detective: investigated → result
+  teammates?: string[]; // mafia: your allies' ids
+  protectedId?: string | null; // doctor: who you shielded
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -231,6 +235,59 @@ function makeName(text: string) {
   return tex;
 }
 
+// A glowing overhead pill that screams a player's secret status (MAFIA / CLEAR /
+// ALLY / SHIELDED). Drawn on a canvas, mapped onto a billboarded plane.
+function makeTagTexture(text: string, color: string) {
+  const w = 256;
+  const h = 96;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+  ctx.font = '800 42px ui-monospace, monospace';
+  const tw = ctx.measureText(text).width;
+  const pad = 30;
+  const pw = Math.min(w - 8, tw + pad * 2);
+  const px = (w - pw) / 2;
+  const py = 16;
+  const ph = h - 32;
+  const r = ph / 2;
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 26;
+  roundRect(ctx, px, py, pw, ph, r);
+  ctx.fillStyle = 'rgba(8,10,16,0.94)';
+  ctx.fill();
+  ctx.restore();
+  roundRect(ctx, px, py, pw, ph, r);
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = color;
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, w / 2, h / 2 + 2);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+// the secret-status tag for a seat, given your private knowledge (null = none)
+function tagFor(
+  id: string,
+  findings: Record<string, 'mafia' | 'town'> | undefined,
+  teammates: string[] | undefined,
+  protectedId: string | null | undefined,
+): { text: string; color: string } | null {
+  const f = findings?.[id];
+  if (f === 'mafia') return { text: 'MAFIA', color: '#e0454f' };
+  if (f === 'town') return { text: 'CLEAR', color: '#34d399' };
+  if (teammates?.includes(id)) return { text: 'ALLY', color: '#c084fc' };
+  if (protectedId === id) return { text: 'SHIELDED', color: '#2dd4bf' };
+  return null;
+}
+
 const lerpNum = (a: number, b: number, t: number) => a + (b - a) * t;
 function lerpAngle(a: number, b: number, t: number) {
   let d = b - a;
@@ -254,6 +311,9 @@ type Seat = {
   bodyMat: THREE.MeshPhysicalMaterial | null;
   ring: THREE.Mesh | null;
   label: THREE.Mesh | null;
+  tag: THREE.Mesh | null;
+  tagMat: THREE.MeshBasicMaterial | null;
+  tagKey: string;
   baseColor: THREE.Color;
   alive: boolean;
 };
@@ -451,6 +511,7 @@ export default function TribunalScene(props: Props) {
         if (s.grp) scene.remove(s.grp);
         if (s.label) scene.remove(s.label);
         if (s.ring) scene.remove(s.ring);
+        s.tagMat?.map?.dispose(); // dynamic tag textures aren't tracked in `owned`
       }
       for (const o of owned) o.dispose();
       owned = [];
@@ -473,7 +534,7 @@ export default function TribunalScene(props: Props) {
 
         if (human) {
           // You ARE the camera — no figure, just a seat record so others look at you.
-          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, head: null, skull: null, skinMat: null, bodyMat: null, ring: null, label: null, baseColor, alive: pl.alive };
+          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, head: null, skull: null, skinMat: null, bodyMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', baseColor, alive: pl.alive };
           seats.push(seat);
           seatById.set(pl.id, seat);
           return;
@@ -520,9 +581,18 @@ export default function TribunalScene(props: Props) {
         ring.position.set(x, 0.37, z);
         scene.add(ring);
 
-        owned.push(bustGeo, bodyMat, skullGeo, skinMat, skin, nameTex, labelMat, labelGeo, ringGeo, ringMat);
+        // overhead secret-status tag (hidden until you learn something about them).
+        // Lives inside grp so it inherits visibility (e.g. hidden during blackout).
+        const tagMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
+        const tagGeo = new THREE.PlaneGeometry(1.2, 0.45);
+        const tag = new THREE.Mesh(tagGeo, tagMat);
+        tag.position.set(0, 2.84, 0);
+        tag.visible = false;
+        grp.add(tag);
 
-        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, head, skull, skinMat, bodyMat, ring, label, baseColor, alive: pl.alive };
+        owned.push(bustGeo, bodyMat, skullGeo, skinMat, skin, nameTex, labelMat, labelGeo, ringGeo, ringMat, tagGeo, tagMat);
+
+        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, head, skull, skinMat, bodyMat, ring, label, tag, tagMat, tagKey: '', baseColor, alive: pl.alive };
         seats.push(seat);
         seatById.set(pl.id, seat);
       });
@@ -702,6 +772,31 @@ export default function TribunalScene(props: Props) {
 
         // billboard the name label toward the camera
         s.label.rotation.y = Math.atan2(camera.position.x - s.label.position.x, camera.position.z - s.label.position.z);
+
+        // overhead secret-status tag — your private role knowledge, made obvious.
+        // Only ever shown to a seated player (never the watch-mode spectator).
+        if (s.tag && s.tagMat) {
+          const want = isSpectator ? null : tagFor(s.id, p.findings, p.teammates, p.protectedId);
+          const key = want ? want.text : '';
+          if (key !== s.tagKey) {
+            s.tagKey = key;
+            s.tagMat.map?.dispose();
+            if (want) {
+              s.tagMat.map = makeTagTexture(want.text, want.color);
+              s.tagMat.needsUpdate = true;
+              s.tag.visible = true;
+            } else {
+              s.tagMat.map = null;
+              s.tagMat.needsUpdate = true;
+              s.tag.visible = false;
+            }
+          }
+          if (s.tag.visible) {
+            s.tag.rotation.y = Math.atan2(camera.position.x - s.pos.x, camera.position.z - s.pos.z);
+            const pulse = 1 + Math.sin(t * 9) * 0.05;
+            s.tag.scale.set(pulse, pulse, 1);
+          }
+        }
       }
 
       // drift dust upward

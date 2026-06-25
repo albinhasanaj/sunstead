@@ -57,6 +57,11 @@ export default function Home() {
   const [showPlayers, setShowPlayers] = useState(false);
   // Drives the menu→gameplay transition overlay ('play' = role reveal, 'watch' = cinematic).
   const [intro, setIntro] = useState<null | 'play' | 'watch'>(null);
+  // Your private role knowledge, surfaced as obvious overhead tags in the scene.
+  const [findings, setFindings] = useState<Record<string, 'mafia' | 'town'>>({}); // detective results
+  const [teammates, setTeammates] = useState<string[]>([]); // your Mafia allies' ids
+  const [protectedId, setProtectedId] = useState<string | null>(null); // who you (doctor) shielded
+  const announcedTeamRef = useRef(false);
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -143,10 +148,23 @@ export default function Home() {
           break;
         case 'knowledge':
           setFeed((f) => [...f, { k: 'knowledge', who: e.agent, text: e.text }]);
+          // A detective finding about a specific player → mark them in the scene.
+          if (e.target) setFindings((m) => ({ ...m, [e.target]: e.result === 'MAFIA' ? 'mafia' : 'town' }));
           break;
-        case 'request_action':
-          setTurn(e as Turn);
+        case 'request_action': {
+          const t = e as Turn;
+          setTurn(t);
+          // Capture (and announce, once) your Mafia teammates so the scene can tag them.
+          if (t.teammates?.length) {
+            setTeammates(t.teammates.map((x) => x.id));
+            if (!announcedTeamRef.current) {
+              announcedTeamRef.current = true;
+              const names = t.teammates.map((x) => x.name).join(', ');
+              setFeed((f) => [...f, { k: 'system', text: `🕴 Your Mafia ${t.teammates.length > 1 ? 'allies' : 'ally'}: ${names}` }]);
+            }
+          }
           break;
+        }
         case 'win':
           setWinner(e.winner);
           setFeed((f) => [...f, { k: 'win', winner: e.winner }]);
@@ -176,6 +194,10 @@ export default function Home() {
       setTurn(null);
       setSelected(null);
       setSpeakingId(null);
+      setFindings({});
+      setTeammates([]);
+      setProtectedId(null);
+      announcedTeamRef.current = false;
       setMode(m);
       setRunning(true);
       voice.reset();
@@ -225,8 +247,11 @@ export default function Home() {
     async (tool: string, args: any) => {
       setTurn(null);
       // Local confirmation for your own secret night actions.
-      if (tool === 'protect') setFeed((f) => [...f, { k: 'system', text: `🛡 You protected ${args.target} tonight.` }]);
-      if (tool === 'investigate') setFeed((f) => [...f, { k: 'system', text: `🔎 You investigated ${args.target}…` }]);
+      if (tool === 'protect') {
+        setProtectedId(args.target ?? null);
+        setFeed((f) => [...f, { k: 'system', text: `🛡 You protected ${nameOf(args.target)} tonight.` }]);
+      }
+      if (tool === 'investigate') setFeed((f) => [...f, { k: 'system', text: `🔎 You investigated ${nameOf(args.target)}…` }]);
       try {
         await fetch('/api/game/action', {
           method: 'POST',
@@ -237,7 +262,7 @@ export default function Home() {
         /* ignore */
       }
     },
-    [gameId],
+    [gameId, nameOf],
   );
 
   const myTurn = turn && humanId && turn.agent === humanId ? turn : null;
@@ -275,6 +300,9 @@ export default function Home() {
           speakingId={speakingId}
           accusedId={selected && selected !== humanId ? selected : null}
           turn={turn}
+          findings={findings}
+          teammates={teammates}
+          protectedId={protectedId}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />
