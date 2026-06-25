@@ -1,48 +1,60 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useRef } from "react";
 
 const LINKS = [
-  { href: "/explore", label: "Explore" },
-  { href: "/games/mafia", label: "Mafia" },
+  { href: "/explore", label: "Start Playing" },
+  { href: "/onboarding", label: "Log in" },
+  { href: "/#what", label: "About" },
 ] as const;
 
-export function SiteNav({ current }: { current?: "home" | "explore" | "game" }) {
+export function SiteNav() {
+  const navRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const target = document.getElementById("hero-gaming");
+    const nav = navRef.current;
+    if (!target || !nav) return;
+
+    const sync = () => {
+      nav.style.width = `${target.getBoundingClientRect().width}px`;
+    };
+
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(target);
+    window.addEventListener("resize", sync);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", sync);
+    };
+  }, []);
+
   return (
-    <header className="sticky top-0 z-50 border-b border-white/[0.06] bg-[#080706]/70 backdrop-blur-xl">
-      <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
-        <Link href="/" className="group flex items-center gap-2.5" aria-label="Collusion home">
-          <span className="block h-2.5 w-2.5 rotate-45 bg-[var(--amber)] transition-transform duration-500 group-hover:rotate-[225deg]" />
-          <span className="font-mono text-sm font-medium uppercase tracking-[0.32em] text-foreground">
-            Collusion
-          </span>
+    <header className="absolute inset-x-0 top-0 z-50">
+      <nav
+        ref={navRef}
+        className="mx-auto flex h-20 max-w-[92vw] items-center justify-between"
+      >
+        <Link
+          href="/"
+          className="text-sm font-bold uppercase tracking-tight text-foreground"
+          aria-label="NAME HERE home"
+        >
+          NAME HERE
         </Link>
 
-        <div className="flex items-center gap-6 sm:gap-8">
-          <div className="hidden items-center gap-7 sm:flex">
-            {LINKS.map((l) => {
-              const active =
-                (current === "explore" && l.href === "/explore") ||
-                (current === "game" && l.href.startsWith("/games"));
-              return (
-                <Link
-                  key={l.href}
-                  href={l.href}
-                  className={`font-mono text-[11px] uppercase tracking-[0.18em] transition-colors ${
-                    active ? "text-[var(--amber-soft)]" : "text-neutral-400 hover:text-foreground"
-                  }`}
-                >
-                  {l.label}
-                </Link>
-              );
-            })}
-          </div>
-
-          <Link
-            href="/games/mafia"
-            className="group relative inline-flex items-center gap-2 rounded-full border border-[var(--amber)]/40 bg-[var(--amber)]/[0.08] px-4 py-1.5 font-mono text-[11px] uppercase tracking-[0.16em] text-[var(--amber-soft)] transition hover:bg-[var(--amber)]/[0.16]"
-          >
-            <span className="block h-1.5 w-1.5 rounded-full bg-[var(--amber)] live-dot" />
-            Take a seat
-          </Link>
+        <div className="flex items-center gap-3 sm:gap-4">
+          {LINKS.map((l) => (
+            <Link
+              key={l.label}
+              href={l.href}
+              className="text-sm font-bold uppercase text-neutral-300 transition-colors hover:text-foreground"
+            >
+              {l.label}
+            </Link>
+          ))}
         </div>
       </nav>
     </header>
