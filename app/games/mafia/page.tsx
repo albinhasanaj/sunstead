@@ -58,6 +58,12 @@ export default function Home() {
   // Who currently holds the floor in the 3D scene. Set on `speak`, cleared after a
   // beat (or replaced by the next speaker) so heads turn to whoever is talking.
   const [speakingId, setSpeakingId] = useState<string | null>(null);
+  // The line currently being VOICED (driven by the audio queue when voice is on),
+  // so the caption/heads match what you're hearing rather than racing ahead of it.
+  const [speakingLine, setSpeakingLine] = useState<{ who: string; text: string } | null>(null);
+  // True when nothing is queued/playing — used to hold your turn until the table
+  // has finished talking, so you're never asked to chime in over a backlog.
+  const [voiceIdle, setVoiceIdle] = useState(true);
   const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Which seat is mid-LLM (deliberating) right now — drives a "thinking…" cue so
   // the slow AI turns (LLM + memory recall) never feel like a frozen screen.
@@ -127,6 +133,22 @@ export default function Home() {
     else if (musicRef.current?.src) void musicRef.current.play().catch(() => {});
   }, [voiceOn, voice]);
 
+  // The audio queue paces the on-screen floor: a line's caption + speaking head
+  // appear when its audio STARTS and clear when it ENDS, so the table never gets
+  // ahead of what you're hearing. onIdle gates your turn until the room is quiet.
+  useEffect(() => {
+    voice.bind({
+      onStart: (item) => {
+        setSpeakingId(item.id);
+        setSpeakingLine({ who: item.id, text: item.text });
+      },
+      onEnd: (item) => {
+        setSpeakingId((cur) => (cur === item.id ? null : cur));
+      },
+      onIdle: (v) => setVoiceIdle(v),
+    });
+  }, [voice]);
+
   const handle = useCallback(
     (e: any) => {
       switch (e.type) {
@@ -155,13 +177,22 @@ export default function Home() {
         }
         case 'speak':
           setFeed((f) => [...f, { k: 'speak', who: e.agent, text: e.text }]);
-          voice.enqueue(nameOf(e.agent), e.text);
-          setSpeakingId(e.agent);
-          if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
-          speakTimerRef.current = setTimeout(
-            () => setSpeakingId((cur) => (cur === e.agent ? null : cur)),
-            Math.max(2000, (e.text?.length ?? 0) * 60),
-          );
+          if (soundOnRef.current) {
+            // Voice on: the audio queue owns the spoken floor. It fires onStart /
+            // onEnd (below) so the caption + speaking head track the ACTUAL audio,
+            // one line at a time, instead of jumping ahead to the next model.
+            voice.enqueue({ id: e.agent, name: nameOf(e.agent), text: e.text });
+          } else {
+            // Muted: no audio to pace against — reveal each line at a readable,
+            // text-length pace so it still doesn't flicker past.
+            setSpeakingId(e.agent);
+            setSpeakingLine({ who: e.agent, text: e.text });
+            if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
+            speakTimerRef.current = setTimeout(
+              () => setSpeakingId((cur) => (cur === e.agent ? null : cur)),
+              Math.max(2000, (e.text?.length ?? 0) * 60),
+            );
+          }
           break;
         case 'thinking':
           setThinkingIds((cur) => (e.on ? (cur.includes(e.agent) ? cur : [...cur, e.agent]) : cur.filter((id) => id !== e.agent)));
@@ -258,6 +289,8 @@ export default function Home() {
       setTurn(null);
       setSelected(null);
       setSpeakingId(null);
+      setSpeakingLine(null);
+      setVoiceIdle(true);
       setThinkingIds([]);
       setNightWake(null);
       setFindings({});
@@ -424,8 +457,11 @@ export default function Home() {
     }
     return null;
   }, [feed]);
+  // The caption follows the line currently being VOICED (audio-paced), falling back
+  // to the latest emitted line if nothing is mid-playback.
   const captionVisible = !!speakingId;
-  const captionWho = speakingId ?? lastSpeak?.who ?? null;
+  const captionWho = speakingLine?.who ?? speakingId ?? lastSpeak?.who ?? null;
+  const captionText = speakingLine?.text ?? lastSpeak?.text;
 
   // "thinking…" cue (hidden while someone is speaking). At night the wake narrator
   // is the indicator instead, so we suppress this here. A set, since several agents
@@ -707,7 +743,7 @@ export default function Home() {
             <PlayerFace name={nameOf(captionWho)} size={46} />
             <div className="min-w-0 flex-1">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/90">{nameOf(captionWho)}</div>
-              <AutoScrollText text={lastSpeak?.text} />
+              <AutoScrollText text={captionText} />
             </div>
           </button>
         )}
@@ -750,7 +786,8 @@ export default function Home() {
         <VoiceDock
           voiceOn={voiceOn}
           onToggleVoice={() => setVoiceOn((v) => !v)}
-          active={!!discussionTurn}
+          active={!!discussionTurn && (!voiceOn || voiceIdle)}
+          waiting={!!discussionTurn && voiceOn && !voiceIdle}
           phaseLabel={
             inDiscussion
               ? 'the table is talking…'
@@ -1054,6 +1091,7 @@ function VoiceDock({
   voiceOn,
   onToggleVoice,
   active,
+  waiting,
   phaseLabel,
   speaking,
   addresseeName,
@@ -1061,7 +1099,8 @@ function VoiceDock({
 }: {
   voiceOn: boolean;
   onToggleVoice: () => void;
-  active: boolean; // your discussion turn → mic/text enabled
+  active: boolean; // your discussion turn AND the table has finished talking → enabled
+  waiting: boolean; // your turn, but holding until the spoken backlog finishes
   phaseLabel: string; // hint shown when it isn't your turn
   speaking: boolean; // table is voicing a line → animate the orb
   addresseeName: string | null;
@@ -1210,6 +1249,8 @@ function VoiceDock({
       <div className="text-[11px] tracking-wide text-neutral-400">
         {active ? (
           <span className="text-amber-200/90">your turn — {recording ? 'release to send' : transcribing ? 'transcribing…' : 'hold the mic to speak'}</span>
+        ) : waiting ? (
+          <span className="text-sky-300/80">listening — you’re up once the table finishes…</span>
         ) : (
           <span>{phaseLabel}</span>
         )}
