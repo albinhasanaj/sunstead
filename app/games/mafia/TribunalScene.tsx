@@ -274,6 +274,44 @@ function makeTagTexture(text: string, color: string) {
   return tex;
 }
 
+// A white targeting reticle (broken ring + corner ticks + centre dot), tinted at
+// runtime via the material colour. Billboarded over whoever you're about to pick.
+function makeReticleTexture() {
+  const s = 256;
+  const c = document.createElement('canvas');
+  c.width = s;
+  c.height = s;
+  const ctx = c.getContext('2d')!;
+  ctx.translate(s / 2, s / 2);
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#ffffff';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 10;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    const a0 = i * (Math.PI / 2) + 0.35;
+    const a1 = (i + 1) * (Math.PI / 2) - 0.35;
+    ctx.arc(0, 0, 92, a0, a1);
+    ctx.stroke();
+  }
+  ctx.lineWidth = 8;
+  for (let i = 0; i < 4; i++) {
+    const a = i * (Math.PI / 2);
+    const x = Math.cos(a);
+    const y = Math.sin(a);
+    ctx.beginPath();
+    ctx.moveTo(x * 68, y * 68);
+    ctx.lineTo(x * 110, y * 110);
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(0, 0, 7, 0, Math.PI * 2);
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 // the secret-status tag for a seat, given your private knowledge (null = none)
 function tagFor(
   id: string,
@@ -491,6 +529,14 @@ export default function TribunalScene(props: Props) {
     const dust = new THREE.Points(dustGeo, new THREE.PointsMaterial({ color: 0x9fb4d8, size: 0.035, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
     fx.add(dust);
 
+    // targeting reticle — a billboarded crosshair shown over the hovered target
+    // during your own pick turn (kill / investigate / protect / vote).
+    const reticleMat = new THREE.MeshBasicMaterial({ map: makeReticleTexture(), color: 0xff4d4d, transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending });
+    const reticle = new THREE.Mesh(new THREE.PlaneGeometry(1.25, 1.25), reticleMat);
+    reticle.renderOrder = 999;
+    reticle.visible = false;
+    scene.add(reticle);
+
     // ── post-processing ──
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
@@ -691,6 +737,7 @@ export default function TribunalScene(props: Props) {
     // ── interaction: raycast faces ──
     const ray = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
+    let hoveredId: string | null = null; // seat under the cursor during a pick turn
     function onPointerDown(e: PointerEvent) {
       const rect = renderer.domElement.getBoundingClientRect();
       ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -721,6 +768,27 @@ export default function TribunalScene(props: Props) {
       const rect = renderer.domElement.getBoundingClientRect();
       par.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       par.y = ((e.clientY - rect.top) / rect.height) * 2 - 1;
+      // hover-pick: while it's your own target turn, track which seat the cursor is
+      // over so the loop can snap the reticle to it.
+      const lp = live.current;
+      if (lp.turn && lp.turn.agent === lp.myId) {
+        ndc.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        ndc.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        ray.setFromCamera(ndc, camera);
+        const groups = seats.filter((s) => !s.human && s.alive && s.grp).map((s) => s.grp!);
+        const hit = ray.intersectObjects(groups, true)[0];
+        let found: Seat | undefined;
+        if (hit) {
+          let obj: THREE.Object3D | null = hit.object;
+          while (obj && !found) {
+            found = seats.find((s) => s.grp === obj);
+            obj = obj.parent;
+          }
+        }
+        hoveredId = found ? found.id : null;
+      } else {
+        hoveredId = null;
+      }
     }
     renderer.domElement.addEventListener('pointermove', onPointerMove);
 
@@ -737,6 +805,7 @@ export default function TribunalScene(props: Props) {
     const cBg = new THREE.Color();
     const cBulbOn = new THREE.Color();
     const cBulbOff = new THREE.Color(0x101010);
+    const cWork = new THREE.Color(); // scratch colour for per-seat lerps
     let t = 0;
     let raf = 0;
 
@@ -777,12 +846,21 @@ export default function TribunalScene(props: Props) {
       const hide = v.hide;
       fx.visible = !hide;
 
+      // Mafia night ritual: from a Mafia seat, the town is "asleep" (dimmed, heads
+      // bowed) while your allies stay lit — the digital "open your eyes" moment.
+      const mafiaNight = !isSpectator && p.phase === 'NIGHT' && p.myRole === 'mafia';
+
       for (const s of seats) {
         if (!s.grp || !s.head || !s.ring || !s.label) continue; // human seat = no figure
         s.grp.visible = !hide;
         s.label.visible = !hide;
         s.ring.visible = !hide;
         if (hide) continue;
+
+        // night ritual: allies stay in colour & awake; the sleeping town dims out.
+        const isAlly = mafiaNight && (p.teammates?.includes(s.id) ?? false);
+        const sleeping = mafiaNight && !isAlly && s.alive;
+        if (s.alive && s.bodyMat) s.bodyMat.color.lerp(sleeping ? cWork.set(0x0e1118) : s.baseColor, 0.06);
 
         // ── death: collapse + topple outward + a rising "soul" burst (one-shot) ──
         if (!s.alive) {
@@ -812,9 +890,12 @@ export default function TribunalScene(props: Props) {
         }
 
         const talking = !p.accusedId && p.speakingId === s.id && s.alive;
-        if (s.alive) s.head.rotation.x = lerpNum(s.head.rotation.x, talking ? Math.sin(t * 34) * 0.05 : 0, 0.18);
+        // sleeping town bow their heads; everyone else holds talking/idle pitch.
+        const headPitch = sleeping ? 0.5 : talking ? Math.sin(t * 34) * 0.05 : 0;
+        if (s.alive) s.head.rotation.x = lerpNum(s.head.rotation.x, headPitch, sleeping ? 0.08 : 0.18);
 
-        const glowI = talking ? 0.45 + Math.sin(t * 18) * 0.2 : p.accusedId === s.id ? 0.5 : 0;
+        // awake allies get a soft pulse; sleeping town go dark.
+        const glowI = talking ? 0.45 + Math.sin(t * 18) * 0.2 : p.accusedId === s.id ? 0.5 : isAlly ? 0.22 + Math.sin(t * 5) * 0.08 : 0;
         if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, glowI, 0.12);
 
         // who voted to kill this seat (Mafia, at night, from your seat only)
@@ -835,6 +916,12 @@ export default function TribunalScene(props: Props) {
         } else if (isKillTarget) {
           rm.color.set(0xe0454f);
           rm.opacity = 0.5 + Math.sin(t * 7) * 0.14;
+        } else if (isAlly) {
+          rm.color.set(0xc084fc);
+          rm.opacity = 0.4 + Math.sin(t * 5) * 0.12;
+        } else if (sleeping) {
+          rm.color.set(0x161b27);
+          rm.opacity = 0.1;
         } else {
           rm.color.set(0x2a3148);
           rm.opacity = 0.22;
@@ -868,6 +955,30 @@ export default function TribunalScene(props: Props) {
             const pulse = 1 + Math.sin(t * 9) * 0.05;
             s.tag.scale.set(pulse, pulse, 1);
           }
+        }
+      }
+
+      // ── targeting reticle: snaps to whoever you hover during your pick turn ──
+      {
+        const myT = p.turn && p.turn.agent === p.myId ? p.turn : null;
+        const legal: string[] = myT?.legal ?? [];
+        const pickTool = ['mafia_propose_kill', 'investigate', 'protect', 'vote'].find((x) => legal.includes(x));
+        let aimSeat: Seat | undefined;
+        if (pickTool) {
+          const hov = hoveredId ? seatById.get(hoveredId) : undefined;
+          aimSeat = hov && hov.alive && !hov.human ? hov : p.accusedId ? seatById.get(p.accusedId) : undefined;
+        }
+        if (aimSeat && aimSeat.grp) {
+          const col = pickTool === 'mafia_propose_kill' ? 0xff4d4d : pickTool === 'investigate' ? 0x6fb4ff : pickTool === 'protect' ? 0x5fe0c8 : 0xf0b54a;
+          const hw = headWorld(aimSeat);
+          reticle.position.set(hw.x, hw.y + 0.5, hw.z);
+          reticle.quaternion.copy(camera.quaternion);
+          reticleMat.color.set(col);
+          const pulse = 1 + Math.sin(t * 10) * 0.08;
+          reticle.scale.set(pulse, pulse, 1);
+          reticle.visible = true;
+        } else {
+          reticle.visible = false;
         }
       }
 
@@ -934,6 +1045,7 @@ export default function TribunalScene(props: Props) {
         else if (m) (m as THREE.Material).dispose();
       });
       dustGeo.dispose();
+      reticleMat.map?.dispose();
       envRT.texture.dispose();
       pmrem.dispose();
       composer.dispose();

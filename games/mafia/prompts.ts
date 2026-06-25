@@ -3,6 +3,25 @@ import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
 
 const nameOf = (s: GameState, id: PlayerId) => s.players.find((p) => p.id === id)?.name ?? id;
+
+// In-prompt transcript window: cap the visible public log to the most recent N
+// entries so older statements scroll OUT of context and can only be retrieved
+// from long-term memory (pgvector). This is what makes recall load-bearing:
+// without it the full transcript is always in-prompt and memory is decorative.
+// N is small enough that a prior round's claims fall outside a normal game's
+// window; 0 or negative disables the cap. Override with MAFIA_CONTEXT_WINDOW.
+export function contextWindow(): number {
+  const n = Number(process.env.MAFIA_CONTEXT_WINDOW ?? 10);
+  return Number.isFinite(n) ? n : 10;
+}
+
+// The slice of the public log the agent is allowed to SEE this turn (the rest has
+// scrolled out and must be recalled). Shared by renderContext (what to show) and
+// recallForTurn (what to EXCLUDE from recall, since it's already on screen).
+export function visibleLog(state: GameState): GameState['publicLog'] {
+  const n = contextWindow();
+  return n > 0 ? state.publicLog.slice(-n) : state.publicLog;
+}
 const teammates = (s: GameState, self: AgentState) =>
   s.players.filter((p) => isMafia(p.role) && p.id !== self.id);
 
@@ -68,8 +87,16 @@ export function renderContext(state: GameState, agent: AgentState): string {
         .join(', ')
     : '(none yet)';
 
-  const transcript = state.publicLog.length
-    ? state.publicLog
+  // Only the most recent window is shown; older lines have scrolled out and live
+  // in long-term memory. A marker tells the agent history exists it can't see, so
+  // it leans on the recalled MEMORY block instead of assuming nothing came before.
+  const shown = visibleLog(state);
+  const omitted = state.publicLog.length - shown.length;
+  const transcript = shown.length
+    ? (omitted > 0
+        ? `… [${omitted} earlier statement(s) have scrolled out of view; older history is in long-term memory] …\n`
+        : '') +
+      shown
         .map((l) => `${l.speaker === 'system' ? 'NARRATOR' : nameOf(state, l.speaker)}: ${l.text}`)
         .join('\n')
     : '(nothing has been said yet)';

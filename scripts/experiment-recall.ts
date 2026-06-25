@@ -1,5 +1,5 @@
 /**
- * Fix-2 artifact: recall-vs-control A/B with LIVE models.
+ * Fix-2 artifact: recall-vs-control A/B with LIVE models — HONEST window setup.
  *
  * Same scenario, same model, same temperature (0) — run twice on the SAME built
  * GameState, the only difference being the long-term memory block:
@@ -7,20 +7,22 @@
  *                         statements (Aiven Postgres via MCP) into the prompt.
  *   ARM B  (control)    — identical prompt, but no memory block (recall disabled).
  *
- * The deciding agent (Claude, a Villager) votes at round 2. A cross-round
- * contradiction — Gemini claimed DETECTIVE in round 1, then denies ever holding a
- * role in round 2 — lives ONLY in long-term memory, not in the in-prompt
- * transcript (it has "scrolled out" of the recent window). That is exactly the
- * regime where vector recall earns its keep: ARM A should recall the round-1
- * Detective claim, catch the contradiction, and vote Gemini; ARM B, blind to it,
- * should follow the live discussion and vote elsewhere.
+ * Unlike the first version, NOTHING is artificially held out of the transcript.
+ * The round-1 history (including Gemini's DETECTIVE claim) is written to the
+ * public log exactly as a real game would, AND mirrored into Aiven memory exactly
+ * as recordPublic() does. The MAFIA_CONTEXT_WINDOW caps the in-prompt transcript
+ * to the most recent N entries, so by the round-2 vote the round-1 Detective claim
+ * has scrolled OUT of the prompt on its own. The ONLY way to see it now is the
+ * pgvector recall — which excludes the still-visible window, so it returns the
+ * out-of-view round-1 statements.
  *
- * This is a controlled existence proof (a planted contradiction, temperature 0),
- * not a claim of determinism — one clean instance is the artifact.
+ * The deciding agent (Claude, a Villager) votes at round 2. ARM A should recall
+ * Gemini's scrolled-out Detective claim, catch the contradiction with Gemini's
+ * visible round-2 "I never had any role" line, and vote Gemini; ARM B, blind to
+ * the scrolled-out history, follows the live discussion and votes elsewhere.
  *
- * The turn machinery here mirrors engine/agent.ts::takeTurn exactly (same prompt
- * assembly, same wrapped tools, same toolChoice/stepCountIs) so ARM A reproduces
- * the real game loop; the only addition is that we capture the prompt + vote.
+ * Controlled existence proof (planted contradiction, temperature 0), not a
+ * determinism claim. The turn machinery mirrors engine/agent.ts::takeTurn.
  *
  * Writes: artifacts/recall-vs-control.md  (committed)
  * Run:    npx tsx scripts/experiment-recall.ts
@@ -29,43 +31,61 @@ import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
 loadEnv({ path: '.env.local' });
 
+// Pin the window to the shipped default so the artifact is reproducible even if
+// the env sets a different value. (Equals the default in prompts.ts::contextWindow.)
+process.env.MAFIA_CONTEXT_WINDOW = process.env.MAFIA_CONTEXT_WINDOW ?? '10';
+
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { generateText, stepCountIs, tool } from 'ai';
 import type { AgentState, GameEvent, GameState } from '../engine/types';
 import { mafiaGame } from '../games/mafia';
+import { contextWindow, visibleLog } from '../games/mafia/prompts';
 import { remember, memoryEnabled } from '../lib/memory';
 
 const MODEL = process.env.MAFIA_MODEL || 'anthropic/claude-haiku-4.5'; // rate-limit-safe
 const DECIDER = 'Claude'; // the seat that votes
+const DETECTIVE_CLAIM = "I'll be straight with everyone — I'm the Detective. Last night I investigated DeepSeek and he's innocent, so we can all trust him.";
 
-// ── build the scenario state ───────────────────────────────────────────────────
+// One realistic transcript, in order, exactly as a game would accumulate it. The
+// round-1 Detective claim is a normal public line; the window (not this script)
+// is what scrolls it out of the prompt by the round-2 vote.
+interface Line { round: number; phase: string; id: string; name: string; text: string; system?: boolean }
+const NAMES: Record<string, string> = { p1: 'GPT', p2: 'Claude', p3: 'Gemini', p4: 'DeepSeek', p5: 'Qwen' };
+const HISTORY: Line[] = [
+  // ── round 1 discussion — Gemini claims Detective ──
+  { round: 1, phase: 'DISCUSSION', id: 'p3', name: 'Gemini', text: DETECTIVE_CLAIM },
+  { round: 1, phase: 'DISCUSSION', id: 'p1', name: 'GPT', text: 'Good to know, Gemini. That clears DeepSeek for me.' },
+  { round: 1, phase: 'DISCUSSION', id: 'p5', name: 'Qwen', text: "A confirmed Detective on day one is huge. Let's keep Gemini safe tonight." },
+  { round: 1, phase: 'DISCUSSION', id: 'p4', name: 'DeepSeek', text: "Appreciated. Then let's lean on whoever has stayed quiet." },
+  { round: 1, phase: 'DISCUSSION', id: 'p2', name: 'Claude', text: "I'll hold judgment until we've seen more from everyone." },
+  { round: 1, phase: 'VOTE', id: 'system', name: 'system', system: true, text: 'The town could not agree. No one was eliminated.' },
+  // ── round 2 — Qwen dead; discussion points at GPT; Gemini DENIES any role ──
+  { round: 2, phase: 'NIGHT', id: 'system', name: 'system', system: true, text: 'Dawn breaks. Qwen was found dead. They were a Villager.' },
+  { round: 2, phase: 'DISCUSSION', id: 'p4', name: 'DeepSeek', text: "GPT, you've dodged every question and keep pushing to lynch townsfolk — I think you're Mafia." },
+  { round: 2, phase: 'DISCUSSION', id: 'p1', name: 'GPT', text: "That's a stretch, DeepSeek. I've done nothing suspicious." },
+  { round: 2, phase: 'DISCUSSION', id: 'p2', name: 'Claude', text: 'What concretely points to GPT beyond tone?' },
+  { round: 2, phase: 'DISCUSSION', id: 'p4', name: 'DeepSeek', text: 'He hedges every round and never commits to a read. Classic Mafia.' },
+  { round: 2, phase: 'DISCUSSION', id: 'p1', name: 'GPT', text: "I'm being careful, not deceptive." },
+  { round: 2, phase: 'DISCUSSION', id: 'p2', name: 'Claude', text: "Fair. Let's hear from everyone before we decide." },
+  { round: 2, phase: 'DISCUSSION', id: 'p3', name: 'Gemini', text: "I'm just a regular villager, no special role here — and honestly DeepSeek's read on GPT sounds right to me. GPT has been slippery all game." },
+  { round: 2, phase: 'DISCUSSION', id: 'p4', name: 'DeepSeek', text: "Glad we agree. I've made my case — I'm voting GPT." },
+  { round: 2, phase: 'DISCUSSION', id: 'p1', name: 'GPT', text: 'This is a witch hunt and you all know it.' },
+];
+
 function buildState(gameId: string): GameState {
-  const mk = (id: string, name: string, role: string, alive = true): AgentState => ({
-    id, name, alive, role, private: { model: MODEL, trait: traitOf(name), suspicions: {}, notes: '' },
+  const mk = (id: string, role: string, alive = true): AgentState => ({
+    id, name: NAMES[id], alive, role, private: { model: MODEL, trait: traitOf(NAMES[id]), suspicions: {}, notes: '' },
   });
   const players: AgentState[] = [
-    mk('p1', 'GPT', 'villager'),
-    mk('p2', 'Claude', 'villager'), // the decider (town)
-    mk('p3', 'Gemini', 'mafia'),    // the liar (role hidden from Claude)
-    mk('p4', 'DeepSeek', 'villager'),
-    mk('p5', 'Qwen', 'villager', false), // killed night 1 — justifies round 2
+    mk('p1', 'villager'),
+    mk('p2', 'villager'), // Claude — the decider (town)
+    mk('p3', 'mafia'),    // Gemini — the liar (role hidden from Claude)
+    mk('p4', 'villager'),
+    mk('p5', 'villager', false), // Qwen — killed night 1
   ];
-  // Round-2 discussion the decider SEES in-prompt. It points suspicion at GPT
-  // (DeepSeek accuses him) and contains Gemini DENYING any role — but NOT the
-  // round-1 Detective claim, which lives only in long-term memory.
-  const publicLog: GameState['publicLog'] = [
-    { speaker: 'system', text: 'Dawn breaks. Qwen was found dead. They were a Villager.' },
-    { speaker: 'p4', text: 'GPT, you have dodged every question and kept pushing to lynch townsfolk. I think you are Mafia.' },
-    { speaker: 'p1', text: 'That is a stretch, DeepSeek. I have done nothing suspicious.' },
-    { speaker: 'p3', text: 'I am just an ordinary villager like most of us — I never had any special role. Let us reason this out calmly.' },
-    { speaker: 'p4', text: 'I am voting GPT.' },
-  ];
+  const publicLog = HISTORY.map((l) => ({ speaker: l.system ? 'system' : l.id, text: l.text }));
   return {
-    players,
-    phase: 'VOTE',
-    round: 2,
-    publicLog,
-    winner: null,
+    players, phase: 'VOTE', round: 2, publicLog, winner: null,
     meta: { gameId, votes: {}, killProposals: {}, nightKill: null, protect: null, mafiaChat: [] },
   };
 }
@@ -75,24 +95,20 @@ function traitOf(name: string): string {
   return 'a sharp, observant player who keeps their cards close.';
 }
 
-// Round-1 statements that have scrolled out of the prompt but live in memory.
-// Seeded via the real remember() → Aiven Postgres (pgvector) over MCP.
+// Mirror recordPublic(): every public (non-system) line is written to memory as it
+// is spoken. So by the round-2 vote, memory holds the WHOLE game — including the
+// still-visible round-2 lines. recall must (and does) exclude the visible window.
 async function seedMemory(gameId: string): Promise<void> {
-  const r1 = [
-    { speaker: 'Gemini', text: 'I am the Detective. Last night I investigated DeepSeek and he came back innocent — you can all trust him.' },
-    { speaker: 'GPT', text: 'Good to know, Gemini. That clears DeepSeek in my book.' },
-    { speaker: 'DeepSeek', text: 'Appreciated. Then let us put pressure on the players who have stayed quiet.' },
-  ];
-  for (const s of r1) {
-    await remember({ gameId, round: 1, phase: 'DISCUSSION', speaker: s.speaker, text: s.text });
+  for (const l of HISTORY) {
+    if (l.system) continue;
+    await remember({ gameId, round: l.round, phase: l.phase, speaker: l.name, text: l.text });
   }
 }
 
-// ── one turn, mirroring engine/agent.ts::takeTurn (capturing prompt + vote) ─────
-interface TurnResult { prompt: string; memBlock: string | null; vote: string | null; reasoning: string | null; }
+interface TurnResult { prompt: string; memBlock: string | null; vote: string | null; reasoning: string | null }
 
+// One turn, mirroring engine/agent.ts::takeTurn (capturing prompt + vote).
 async function runTurn(state: GameState, agent: AgentState, withMemory: boolean): Promise<TurnResult> {
-  // Fresh private slate so the two arms start identically.
   agent.private.suspicions = {};
   agent.private.notes = '';
   state.meta.votes = {};
@@ -132,76 +148,87 @@ async function runTurn(state: GameState, agent: AgentState, withMemory: boolean)
     tools,
     toolChoice: 'required',
     stopWhen: [stepCountIs(2)],
-    temperature: 0, // hold everything but the memory block constant
+    temperature: 0,
   });
 
   const vote = voteTargetId ? (state.players.find((p) => p.id === voteTargetId)?.name ?? voteTargetId) : null;
   return { prompt, memBlock, vote, reasoning };
 }
 
-// ── artifact writer ─────────────────────────────────────────────────────────────
-function writeArtifact(path: string, gameId: string, a: TurnResult, b: TurnResult, pass: boolean): void {
-  const recalledGeminiR1 = /Detective/i.test(a.memBlock ?? '');
+function writeArtifact(
+  path: string, gameId: string, window: number,
+  claimVisible: boolean, claimRecalled: boolean,
+  a: TurnResult, b: TurnResult, pass: boolean,
+): void {
   const md = [
     '# Recall-vs-control artifact — does pgvector memory change the vote?',
     '',
-    '> Generated by `scripts/experiment-recall.ts` against a LIVE model. This is a',
-    '> controlled A/B existence proof, not a determinism claim.',
+    '> Generated by `scripts/experiment-recall.ts` against a LIVE model. Controlled',
+    '> A/B existence proof (planted contradiction, temperature 0), not a determinism claim.',
     '',
-    '## Method',
+    '## Honest setup (no manual omission)',
     '',
     `- **Model:** \`${MODEL}\`, **temperature:** 0 (same in both arms).`,
-    `- **Decider:** ${DECIDER} (a Villager) casts a vote at round 2 (\`VOTE\` phase).`,
-    `- **Game id:** \`${gameId}\` — memory is scoped to this id in Aiven.`,
-    '- **Only variable:** ARM A appends the pgvector-recalled memory block to the',
-    '  prompt; ARM B (control) does not. Same system prompt, same in-prompt transcript.',
-    '- **Planted contradiction:** in round 1 (held only in Aiven memory, NOT in the',
-    '  prompt transcript) Gemini claimed to be the **Detective**; in the round-2',
-    `  discussion shown to ${DECIDER}, Gemini denies ever holding a role.`,
+    `- **Decider:** ${DECIDER} (a Villager) votes at round 2 (\`VOTE\` phase).`,
+    `- **Context window:** \`MAFIA_CONTEXT_WINDOW=${window}\` — the prompt shows only the`,
+    '  most recent ' + window + ' public-log entries (real renderContext behavior).',
+    '- The round-1 history — including Gemini\'s **Detective** claim — is a normal public',
+    '  line AND is mirrored into Aiven memory just like `recordPublic()`. Nothing is',
+    '  held back by the script; the **window** is what scrolls round-1 out of the prompt.',
+    `- **Detective claim still visible in the prompt window?** \`${claimVisible}\` ` +
+      `(expected \`false\` — it has scrolled out).`,
+    `- **Detective claim recalled from memory in ARM A?** \`${claimRecalled}\`.`,
+    '- recall excludes the still-visible window, so it returns genuinely out-of-view history.',
     '',
     '## Result',
     '',
-    `| | ARM A — memory ON | ARM B — control (no memory) |`,
-    `|---|---|---|`,
-    `| Recalled block present in prompt | ${a.memBlock ? 'YES' : 'no'} | n/a |`,
-    `| Round-1 Detective claim recalled | ${recalledGeminiR1 ? 'YES' : 'no'} | n/a |`,
+    '| | ARM A — memory ON | ARM B — control (no memory) |',
+    '|---|---|---|',
+    `| Recalled block present | ${a.memBlock ? 'YES' : 'no'} | n/a |`,
+    `| Round-1 Detective claim recalled | ${claimRecalled ? 'YES' : 'no'} | n/a |`,
     `| **Vote** | **${a.vote ?? '(none)'}** | **${b.vote ?? '(none)'}** |`,
     '',
     `**Votes differ:** ${a.vote !== b.vote ? `YES (${a.vote} vs ${b.vote})` : 'no'} — ` +
       `**verdict: ${pass ? 'PASS — recall changed the vote' : 'INCONCLUSIVE this run'}**`,
     '',
+    '- **Game id:** `' + gameId + '`',
+    '',
     '---',
     '',
-    '## ARM A (memory ON) — recalled memory block injected into the prompt',
+    '## ARM A (memory ON) — recalled block injected into the prompt',
     '',
-    'This block is produced by `mafiaGame.recallForTurn()` → `recall()` → Aiven',
-    '`aiven_pg_read` pgvector similarity search, exactly as in the live game loop:',
+    'Produced by `mafiaGame.recallForTurn()` → `recall()` → Aiven `aiven_pg_read`',
+    'pgvector similarity search (excluding the visible window), as in the live loop:',
     '',
     '```',
     (a.memBlock ?? '(no memory recalled)').trim(),
     '```',
     '',
-    `**ARM A private reasoning (update_beliefs):** ${a.reasoning ?? '(none)'}`,
+    `**ARM A private reasoning (update_beliefs):**`,
+    '',
+    (a.reasoning ?? '(none)').trim(),
     '',
     `**ARM A vote:** ${a.vote ?? '(none)'}`,
     '',
     '---',
     '',
-    '## ARM B (control) — same prompt WITHOUT the memory block',
+    '## ARM B (control) — same windowed prompt, NO memory block',
     '',
-    `**ARM B private reasoning (update_beliefs):** ${b.reasoning ?? '(none)'}`,
+    `**ARM B private reasoning (update_beliefs):**`,
+    '',
+    (b.reasoning ?? '(none)').trim(),
     '',
     `**ARM B vote:** ${b.vote ?? '(none)'}`,
     '',
     '---',
     '',
-    '## Full ARM A prompt (system context + memory block)',
+    '## Full ARM A prompt (windowed transcript + memory block)',
     '',
     '```',
     a.prompt.trim(),
     '```',
     '',
-    '## Full ARM B prompt (control — no memory block)',
+    '## Full ARM B prompt (control — windowed transcript, no memory block)',
     '',
     '```',
     b.prompt.trim(),
@@ -216,13 +243,18 @@ async function main() {
     console.error('❌ AIVEN_TOKEN not set — this experiment needs live memory.');
     process.exit(1);
   }
+  const window = contextWindow();
   const gameId = `exp-recall-${Date.now()}`;
-  console.log(`model=${MODEL}  gameId=${gameId}`);
+  console.log(`model=${MODEL}  window=${window}  gameId=${gameId}`);
 
-  console.log('Seeding round-1 history into Aiven memory (via MCP)…');
+  console.log('Seeding the whole game into Aiven memory (mirrors recordPublic)…');
   await seedMemory(gameId);
 
   const state = buildState(gameId);
+
+  // Sanity: the window must have scrolled the Detective claim out of the prompt.
+  const claimVisible = visibleLog(state).some((l) => l.text === DETECTIVE_CLAIM);
+  console.log(`Detective claim visible in prompt window: ${claimVisible} (want false)`);
 
   console.log('ARM A (memory ON) — recalling + voting…');
   const a = await runTurn(state, state.players.find((p) => p.name === DECIDER)!, true);
@@ -232,15 +264,15 @@ async function main() {
   const b = await runTurn(state, state.players.find((p) => p.name === DECIDER)!, false);
   console.log(`  vote=${b.vote}`);
 
-  const recalledContradiction = /Detective/i.test(a.memBlock ?? '');
-  const pass = !!a.memBlock && recalledContradiction && !!a.vote && !!b.vote && a.vote !== b.vote;
+  const claimRecalled = /Detective/i.test(a.memBlock ?? '');
+  const pass = !claimVisible && !!a.memBlock && claimRecalled && !!a.vote && !!b.vote && a.vote !== b.vote;
 
   mkdirSync('artifacts', { recursive: true });
   const path = 'artifacts/recall-vs-control.md';
-  writeArtifact(path, gameId, a, b, pass);
+  writeArtifact(path, gameId, window, claimVisible, claimRecalled, a, b, pass);
 
   console.log('');
-  console.log(`Recalled Detective contradiction in ARM A prompt: ${recalledContradiction}`);
+  console.log(`claimVisible=${claimVisible}  claimRecalled=${claimRecalled}`);
   console.log(`ARM A vote=${a.vote}   ARM B vote=${b.vote}   differ=${a.vote !== b.vote}`);
   console.log(`${pass ? '✅ PASS' : '⚠️  INCONCLUSIVE'} — artifact written to ${path}`);
   process.exit(pass ? 0 : 2);

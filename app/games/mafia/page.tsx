@@ -70,6 +70,9 @@ export default function Home() {
   // Big transient death/elimination announcement banner.
   const [announce, setAnnounce] = useState<{ name: string; sub: string } | null>(null);
   const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Brief "night falls" hush played each time the table goes to sleep.
+  const [nightFall, setNightFall] = useState(false);
+  const nightFallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Phase countdown + the "ready to move to vote" toggle.
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [wantsSkip, setWantsSkip] = useState(false);
@@ -136,6 +139,11 @@ export default function Home() {
           const night = e.phase === 'NIGHT';
           if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
           if (night) playSfx('night');
+          if (night) {
+            setNightFall(true);
+            if (nightFallTimer.current) clearTimeout(nightFallTimer.current);
+            nightFallTimer.current = setTimeout(() => setNightFall(false), 2600);
+          }
           break;
         }
         case 'speak':
@@ -415,6 +423,7 @@ export default function Home() {
     () => () => {
       clearTimeout(speakTimerRef.current ?? undefined);
       clearTimeout(announceTimer.current ?? undefined);
+      clearTimeout(nightFallTimer.current ?? undefined);
     },
     [],
   );
@@ -543,6 +552,23 @@ export default function Home() {
 
       {/* menu → gameplay transition (role reveal for play, cinematic for watch) */}
       {intro && <IntroOverlay mode={intro} role={myRole} onDone={() => setIntro(null)} />}
+
+      {/* night-falls transition — a brief hush as the town goes to sleep */}
+      {nightFall && (
+        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
+          <div className="nightfall-veil absolute inset-0 bg-gradient-to-b from-black via-[#050810]/90 to-black" />
+          <div className="nightfall-text relative text-center">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.5em] text-indigo-300/70">Night falls</div>
+            <div className="mt-2 text-2xl font-light tracking-[0.25em] text-indigo-100/90">the town sleeps…</div>
+          </div>
+          <style>{`
+            @keyframes nightVeil { 0%{opacity:0} 25%{opacity:1} 70%{opacity:1} 100%{opacity:0} }
+            @keyframes nightText { 0%{opacity:0; transform:translateY(8px)} 30%{opacity:1; transform:translateY(0)} 70%{opacity:1} 100%{opacity:0; transform:translateY(-6px)} }
+            .nightfall-veil{ animation:nightVeil 2.6s ease forwards }
+            .nightfall-text{ animation:nightText 2.6s ease forwards }
+          `}</style>
+        </div>
+      )}
 
       {/* dramatic death / elimination announcement */}
       {announce && (

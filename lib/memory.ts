@@ -268,6 +268,7 @@ export async function recall(opts: {
   queryText: string;
   k?: number;
   excludeSpeaker?: string;
+  excludeTexts?: string[]; // statements already visible in-prompt → don't recall them
 }): Promise<Recalled[]> {
   if (!memoryEnabled() || !opts.gameId || !opts.queryText?.trim()) return [];
   const k = Math.max(1, Math.min(opts.k ?? 5, 10)); // small k → lean latency
@@ -276,6 +277,11 @@ export async function recall(opts: {
     const e = await embed(opts.queryText);
     const where = [`game_id = ${q(opts.gameId)}`];
     if (opts.excludeSpeaker) where.push(`speaker <> ${q(opts.excludeSpeaker)}`);
+    // Skip anything the agent can already see this turn, so recall surfaces
+    // genuinely OUT-OF-VIEW history (the point of long-term memory) instead of
+    // echoing the current window back into the prompt.
+    const excl = (opts.excludeTexts ?? []).filter((t) => t?.trim());
+    if (excl.length) where.push(`text NOT IN (${excl.map(q).join(', ')})`);
     const rows = await pgRead(
       `SELECT speaker, round, phase, text, (embedding <=> ${vec(e)}::vector) AS dist
        FROM statements

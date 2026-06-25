@@ -4,7 +4,7 @@ import { DEFAULT_ROSTER, FALLBACK_MODEL, personalityByName, roleDistribution } f
 import { PHASE, PHASES, turnOrder, advancePhase, nextSpeaker } from './phases';
 import { toolsFor } from './tools';
 import { winner } from './winCondition';
-import { systemPrompt, renderContext } from './prompts';
+import { systemPrompt, renderContext, visibleLog } from './prompts';
 
 function shuffle<T>(arr: T[]): T[] {
   const a = [...arr];
@@ -65,7 +65,14 @@ async function recallForTurn(state: GameState, agent: AgentState): Promise<strin
     .join(' ');
   if (!recent.trim()) return null;
 
-  const hits = await recall({ gameId, queryText: recent, k: 4 });
+  // Exclude what the agent can already see this turn, so recall returns history
+  // that has scrolled OUT of the context window — the statements memory exists to
+  // surface. If nothing has scrolled out yet, recall returns nothing (no point).
+  const visibleTexts = visibleLog(state)
+    .filter((l) => l.speaker !== 'system')
+    .map((l) => l.text);
+
+  const hits = await recall({ gameId, queryText: recent, k: 4, excludeTexts: visibleTexts });
   if (!hits.length) return null;
 
   // Visible proof in the terminal run that the agent queried memory via Aiven MCP.
