@@ -1,13 +1,13 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVoiceQueue } from './useVoiceQueue';
 import { usePushToTalk } from './usePushToTalk';
+import TribunalScene, { PlayerFace } from './TribunalScene';
 
 // ── shapes mirrored from engine/types GameEvent (kept loose on the client) ──────
 type Player = { id: string; name: string; role: string; model?: string | null; alive: boolean; human?: boolean };
-type Beliefs = { reasoning: string; suspicions: Record<string, number> };
 type NameRef = { id: string; name: string };
 type Turn = {
   agent: string;
@@ -40,8 +40,6 @@ const ROLE_STYLE: Record<string, string> = {
 export default function Home() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [feed, setFeed] = useState<Feed[]>([]);
-  const [beliefs, setBeliefs] = useState<Record<string, Beliefs>>({});
-  const [knowledge, setKnowledge] = useState<Record<string, string[]>>({});
   const [phase, setPhase] = useState<{ phase: string; round: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
@@ -51,6 +49,11 @@ export default function Home() {
   const [humanId, setHumanId] = useState<string | null>(null);
   const [turn, setTurn] = useState<Turn | null>(null);
   const [voiceOn, setVoiceOn] = useState(true);
+  // Who currently holds the floor in the 3D scene. Set on `speak`, cleared after a
+  // beat (or replaced by the next speaker) so heads turn to whoever is talking.
+  const [speakingId, setSpeakingId] = useState<string | null>(null);
+  const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showLog, setShowLog] = useState(false);
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -96,7 +99,10 @@ export default function Home() {
         case 'setup':
           setPlayers(e.players.map((p: Player) => ({ ...p, alive: true })));
           setPhase({ phase: e.phase, round: e.round });
-          setSelected((s) => s ?? e.players.find((p: Player) => p.human)?.id ?? e.players[0]?.id ?? null);
+          // Only auto-select the human (for the minds panel); in watch mode leave
+          // nothing selected so the scene's heads follow the speaker rather than
+          // locking onto a default "accused" player.
+          setSelected((s) => s ?? e.players.find((p: Player) => p.human)?.id ?? null);
           break;
         case 'phase': {
           setPhase({ phase: e.phase, round: e.round });
@@ -106,12 +112,15 @@ export default function Home() {
           if (night) playSfx('night');
           break;
         }
-        case 'beliefs':
-          setBeliefs((b) => ({ ...b, [e.agent]: { reasoning: e.reasoning, suspicions: e.suspicions } }));
-          break;
         case 'speak':
           setFeed((f) => [...f, { k: 'speak', who: e.agent, text: e.text }]);
           voice.enqueue(nameOf(e.agent), e.text);
+          setSpeakingId(e.agent);
+          if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
+          speakTimerRef.current = setTimeout(
+            () => setSpeakingId((cur) => (cur === e.agent ? null : cur)),
+            Math.max(2000, (e.text?.length ?? 0) * 60),
+          );
           break;
         case 'whisper':
           setFeed((f) => [...f, { k: 'whisper', who: e.agent, text: e.text }]);
@@ -130,7 +139,6 @@ export default function Home() {
           setFeed((f) => [...f, { k: 'vote', who: e.agent, target: e.target }]);
           break;
         case 'knowledge':
-          setKnowledge((kn) => ({ ...kn, [e.agent]: [...(kn[e.agent] ?? []), e.text] }));
           setFeed((f) => [...f, { k: 'knowledge', who: e.agent, text: e.text }]);
           break;
         case 'request_action':
@@ -160,12 +168,11 @@ export default function Home() {
       abortRef.current = ac;
       setPlayers([]);
       setFeed([]);
-      setBeliefs({});
-      setKnowledge({});
       setWinner(null);
       setPhase(null);
       setTurn(null);
       setSelected(null);
+      setSpeakingId(null);
       setMode(m);
       setRunning(true);
       voice.reset();
@@ -231,9 +238,25 @@ export default function Home() {
   );
 
   const myTurn = turn && humanId && turn.agent === humanId ? turn : null;
-  const sel = selected ? players.find((p) => p.id === selected) : null;
-  const selBeliefs = selected ? beliefs[selected] : undefined;
   const me = humanId ? players.find((p) => p.id === humanId) : null;
+  const myRole = me?.role ?? 'unknown';
+  // The scene's own overlay handles target-pick actions (vote / kill / investigate /
+  // protect). The ActionBar only needs to appear for free-text moves: DISCUSSION
+  // speech and the Mafia night whisper.
+  const textTurn = myTurn && (myTurn.phase === 'DISCUSSION' || myTurn.legal.includes('mafia_discuss')) ? myTurn : null;
+
+  // Latest spoken line drives the fading lower-third caption.
+  const lastSpeak = useMemo(() => {
+    for (let i = feed.length - 1; i >= 0; i--) {
+      const f = feed[i];
+      if (f.k === 'speak') return f;
+    }
+    return null;
+  }, [feed]);
+  const captionVisible = !!speakingId;
+  const captionWho = speakingId ?? lastSpeak?.who ?? null;
+
+  useEffect(() => () => clearTimeout(speakTimerRef.current ?? undefined), []);
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-mono">
@@ -287,7 +310,7 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="grid grid-cols-[260px_1fr_340px] h-[calc(100vh-57px)]">
+      <div className="grid grid-cols-[260px_1fr] h-[calc(100vh-57px)]">
         {/* table */}
         <aside className="overflow-y-auto border-r border-neutral-800 p-3 space-y-2">
           <h2 className="px-1 text-xs uppercase tracking-wider text-neutral-500">The table</h2>
@@ -314,86 +337,74 @@ export default function Home() {
           ))}
         </aside>
 
-        {/* transcript + action bar */}
-        <section className="flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
-            {feed.length === 0 && <p className="text-sm text-neutral-600">The table is quiet…</p>}
-            {feed.map((it, i) => (
-              <FeedLine key={i} it={it} nameOf={nameOf} />
-            ))}
-            <div ref={feedEndRef} />
-          </div>
-          {myTurn && <ActionBar turn={myTurn} onSubmit={submitAction} />}
-        </section>
-
-        {/* minds panel */}
-        <aside className="overflow-y-auto border-l border-neutral-800 p-4">
-          <h2 className="text-xs uppercase tracking-wider text-neutral-500">Inside the mind</h2>
-          {!sel && <p className="mt-2 text-sm text-neutral-600">Select a player.</p>}
-          {sel && (
-            <>
-              <div className="mt-2 flex items-center justify-between">
-                <span className="text-base font-bold">
-                  {sel.name}
-                  {sel.human && <span className="ml-1 text-xs text-amber-400">(you)</span>}
-                </span>
-                <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${ROLE_STYLE[sel.role] ?? 'border-neutral-700'}`}>
-                  {sel.role === 'unknown' ? '?' : sel.role}
-                </span>
+        {/* 3D Tribunal scene (the hero) + a compact transcript overlay */}
+        <section className="flex flex-col overflow-hidden bg-black">
+          <div className="relative flex-1 overflow-hidden">
+            <TribunalScene
+              players={players}
+              phase={phase?.phase ?? 'DISCUSSION'}
+              myId={humanId}
+              myRole={myRole}
+              speakingId={speakingId}
+              accusedId={selected && selected !== humanId ? selected : null}
+              turn={turn}
+              onSelect={(id) => setSelected(id || null)}
+              onAction={submitAction}
+            />
+            {players.length === 0 && (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <p className="text-sm text-neutral-500">Press “Watch” to convene the tribunal, or “Join game” to take a seat.</p>
               </div>
-              <div className="truncate text-[11px] text-neutral-500">{sel.human ? 'human player' : sel.model}</div>
-              {!sel.alive && <div className="mt-1 text-xs text-red-400">☠ eliminated</div>}
-
-              {mode === 'play' && !sel.human ? (
-                <p className="mt-6 text-xs text-neutral-600">
-                  Hidden — you’re in the game. Their thoughts unlock when you’re only watching.
-                </p>
-              ) : (
-                <>
-                  <h3 className="mt-4 text-xs uppercase tracking-wider text-neutral-500">Suspicion</h3>
-                  <div className="mt-2 space-y-1.5">
-                    {selBeliefs && Object.keys(selBeliefs.suspicions).length > 0 ? (
-                      Object.entries(selBeliefs.suspicions)
-                        .sort((a, b) => b[1] - a[1])
-                        .map(([id, lvl]) => (
-                          <div key={id} className="flex items-center gap-2">
-                            <span className="w-20 truncate text-xs text-neutral-400">{nameOf(id)}</span>
-                            <div className="h-2 flex-1 rounded bg-neutral-800">
-                              <div
-                                className="h-2 rounded bg-gradient-to-r from-amber-500 to-red-500"
-                                style={{ width: `${Math.round(Math.max(0, Math.min(1, lvl)) * 100)}%` }}
-                              />
-                            </div>
-                            <span className="w-8 text-right text-[10px] text-neutral-500">{Math.round(lvl * 100)}%</span>
-                          </div>
-                        ))
-                    ) : (
-                      <p className="text-xs text-neutral-600">{sel.human ? 'You keep your own counsel.' : 'No reads yet.'}</p>
-                    )}
+            )}
+            {/* fading lower-third caption: who's speaking, with their face + line */}
+            <div
+              className={`pointer-events-none absolute bottom-4 left-1/2 w-[min(680px,calc(100%-2rem))] -translate-x-1/2 transition-opacity duration-500 ${
+                captionVisible && captionWho ? 'opacity-100' : 'opacity-0'
+              }`}
+            >
+              {captionWho && (
+                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-t from-black/85 via-black/60 to-black/25 px-4 py-3 shadow-lg shadow-black/50 backdrop-blur-md">
+                  <PlayerFace name={nameOf(captionWho)} size={46} />
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/90">{nameOf(captionWho)}</div>
+                    <div className="line-clamp-2 text-sm leading-snug text-neutral-100">{lastSpeak?.text}</div>
                   </div>
-
-                  <h3 className="mt-4 text-xs uppercase tracking-wider text-neutral-500">Current thinking</h3>
-                  <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-neutral-300">
-                    {sel.human ? 'That’s up to you.' : selBeliefs?.reasoning ?? '…'}
-                  </p>
-
-                  {(knowledge[sel.id]?.length ?? 0) > 0 && (
-                    <>
-                      <h3 className="mt-4 text-xs uppercase tracking-wider text-sky-400/70">🔎 Findings</h3>
-                      <ul className="mt-2 space-y-1">
-                        {knowledge[sel.id].map((k, i) => (
-                          <li key={i} className="text-xs text-sky-300/90">
-                            {k}
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </>
+                </div>
               )}
-            </>
-          )}
-        </aside>
+            </div>
+
+            {/* toggle for the full transcript drawer */}
+            <button
+              onClick={() => setShowLog((v) => !v)}
+              title="Open the full transcript"
+              className="absolute right-3 top-3 z-30 flex items-center gap-1.5 rounded-lg border border-neutral-700/70 bg-neutral-950/70 px-3 py-1.5 text-xs text-neutral-300 backdrop-blur transition hover:bg-neutral-800/80 hover:text-neutral-100"
+            >
+              📜 Transcript
+            </button>
+
+            {/* slide-out full conversation history */}
+            <div
+              className={`absolute inset-y-0 right-0 z-20 flex w-[340px] max-w-[85%] transform flex-col border-l border-neutral-800 bg-neutral-950/95 backdrop-blur transition-transform duration-300 ${
+                showLog ? 'translate-x-0' : 'translate-x-full'
+              }`}
+            >
+              <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+                <h3 className="text-xs uppercase tracking-wider text-neutral-400">Full transcript</h3>
+                <button onClick={() => setShowLog(false)} className="text-neutral-500 transition hover:text-neutral-200" title="Close">
+                  ✕
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+                {feed.length === 0 && <p className="text-sm text-neutral-600">Nothing said yet.</p>}
+                {feed.map((it, i) => (
+                  <FeedLine key={i} it={it} nameOf={nameOf} />
+                ))}
+                <div ref={feedEndRef} />
+              </div>
+            </div>
+          </div>
+          {textTurn && <ActionBar turn={textTurn} onSubmit={submitAction} />}
+        </section>
       </div>
     </main>
   );
@@ -477,25 +488,9 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
         </div>
       )}
 
-      {phase === 'VOTE' && (
-        <div className="flex items-end gap-2">
-          <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
-            <option value="">vote to eliminate…</option>
-            {alive.map((p) => (
-              <option key={p.id} value={p.name}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => target && onSubmit('vote', { target })}
-            className="rounded bg-amber-500 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-amber-400"
-          >
-            Vote
-          </button>
-        </div>
-      )}
-
+      {/* VOTE and the night target-picks (kill / investigate / protect) are driven
+          by clicking a face in the 3D scene + its action buttons. Here we only keep
+          the free-text Mafia night whisper. */}
       {phase === 'NIGHT' && (
         <div className="space-y-2">
           {turn.teammates.length > 0 && (
@@ -518,62 +513,7 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
               </button>
             </div>
           )}
-          {turn.legal.includes('mafia_propose_kill') && (
-            <div className="flex items-end gap-2">
-              <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
-                <option value="">choose tonight’s kill…</option>
-                {turn.killTargets.map((p) => (
-                  <option key={p.id} value={p.name}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => target && onSubmit('mafia_propose_kill', { target })}
-                className="rounded bg-red-600 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-red-500"
-              >
-                Kill
-              </button>
-            </div>
-          )}
-          {turn.legal.includes('investigate') && (
-            <div className="flex items-end gap-2">
-              <span className="text-xs text-sky-300/80">🔎 Detective — investigate one player:</span>
-              <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
-                <option value="">who to investigate…</option>
-                {turn.investigateTargets.map((p) => (
-                  <option key={p.id} value={p.name}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => target && onSubmit('investigate', { target })}
-                className="rounded border border-sky-500/50 px-4 py-1.5 text-sm font-semibold text-sky-200 hover:bg-sky-500/10"
-              >
-                Investigate
-              </button>
-            </div>
-          )}
-          {turn.legal.includes('protect') && (
-            <div className="flex items-end gap-2">
-              <span className="text-xs text-teal-300/80">🛡 Doctor — protect one player:</span>
-              <select value={target} onChange={(e) => setTarget(e.target.value)} className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm">
-                <option value="">who to protect…</option>
-                {turn.protectTargets.map((p) => (
-                  <option key={p.id} value={p.name}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => target && onSubmit('protect', { target })}
-                className="rounded border border-teal-500/50 px-4 py-1.5 text-sm font-semibold text-teal-200 hover:bg-teal-500/10"
-              >
-                Protect
-              </button>
-            </div>
-          )}
+          <div className="text-xs text-neutral-500">Click a face in the scene, then use the on-screen buttons to act.</div>
         </div>
       )}
     </div>
@@ -598,10 +538,13 @@ function FeedLine({ it, nameOf }: { it: Feed; nameOf: (id: string) => string }) 
       );
     case 'speak':
       return (
-        <p className="text-sm">
-          <span className="font-semibold text-amber-200">{nameOf(it.who)}:</span>{' '}
-          <span className="text-neutral-200">{it.text}</span>
-        </p>
+        <div className="flex items-start gap-2">
+          <PlayerFace name={nameOf(it.who)} size={22} />
+          <p className="text-sm">
+            <span className="font-semibold text-amber-200">{nameOf(it.who)}:</span>{' '}
+            <span className="text-neutral-200">{it.text}</span>
+          </p>
+        </div>
       );
     case 'whisper':
       return (
