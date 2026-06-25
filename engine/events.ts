@@ -41,6 +41,9 @@ export function terminalRenderer(state: GameState): (e: GameEvent) => void {
           '\n' + c.bold(c.cyan(`━━━ ${e.phase}  (round ${e.round}) ━━━━━━━━━━━━━━━━━━━━`)),
         );
         break;
+      case 'thinking':
+        if (e.on) console.log(c.dim(`  💭 ${nameOf(state, e.agent)} is thinking…`));
+        break;
       case 'beliefs': {
         const sus = Object.entries(e.suspicions)
           .sort((a, b) => b[1] - a[1])

@@ -65,22 +65,30 @@ export async function takeTurn(
       stopWhen: [stepCountIs(2)],
     });
 
+  // Light up "thinking" for this seat while its single LLM turn runs. A parallel
+  // scheduler can have several of these lit at once — the UI/terminal use it to
+  // show (and let us verify) concurrent deliberation.
+  emit({ type: 'thinking', agent: agent.id, on: true });
   try {
-    await run(model);
-  } catch (err) {
-    // A single provider hiccup (rate limit, gated model) shouldn't stall the table.
-    // Retry once on the fallback model so the seat still gets to act this turn.
-    if (def.fallbackModel && def.fallbackModel !== model) {
-      try {
-        console.error(`[agent ${agent.name}] ${model} failed → retrying on ${def.fallbackModel}`);
-        await run(def.fallbackModel);
-        return;
-      } catch (err2) {
-        console.error(`[agent ${agent.name}] fallback also failed:`, (err2 as Error).message);
-        return;
+    try {
+      await run(model);
+    } catch (err) {
+      // A single provider hiccup (rate limit, gated model) shouldn't stall the table.
+      // Retry once on the fallback model so the seat still gets to act this turn.
+      if (def.fallbackModel && def.fallbackModel !== model) {
+        try {
+          console.error(`[agent ${agent.name}] ${model} failed → retrying on ${def.fallbackModel}`);
+          await run(def.fallbackModel);
+          return;
+        } catch (err2) {
+          console.error(`[agent ${agent.name}] fallback also failed:`, (err2 as Error).message);
+          return;
+        }
       }
+      console.error(`[agent ${agent.name}] turn failed:`, (err as Error).message);
     }
-    console.error(`[agent ${agent.name}] turn failed:`, (err as Error).message);
+  } finally {
+    emit({ type: 'thinking', agent: agent.id, on: false });
   }
 }
 

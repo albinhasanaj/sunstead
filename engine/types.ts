@@ -75,6 +75,7 @@ export type GameEvent =
   | { type: 'setup'; players: { id: PlayerId; name: string; role: string; model?: string }[]; phase: string; round: number }
   | { type: 'phase'; phase: string; round: number }
   | { type: 'beliefs'; agent: PlayerId; suspicions: Record<PlayerId, number>; reasoning: string }
+  | { type: 'thinking'; agent: PlayerId; on: boolean } // seat is mid-deliberation — for a "thinking…" UI and to visualise concurrent thinking
   | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string }
   | { type: 'whisper'; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)
   | { type: 'action'; agent: PlayerId; kind: string; target?: PlayerId }
