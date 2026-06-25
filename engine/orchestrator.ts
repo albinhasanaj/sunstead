@@ -48,6 +48,9 @@ export async function runGame(
   let guard = 0;
   while (def.winner(state) === null && guard++ < 100) {
     emit({ type: 'phase', phase: state.phase, round: state.round });
+    const phaseStart = Date.now();
+    const aliveNow = state.players.filter((p) => p.alive).length;
+    console.log(`\n[phase] ══ ${state.phase} · round ${state.round} ══ (${aliveNow} alive)`);
 
     // Reactive phases (e.g. discussion): the game picks the next speaker per beat
     // based on who's most motivated, so the table feels alive instead of round-robin.
@@ -80,6 +83,7 @@ export async function runGame(
       }
     }
 
+    console.log(`[phase] ${state.phase} r${state.round} turns finished in ${Date.now() - phaseStart}ms — resolving…`);
     if (def.winner(state) !== null) break;
     await def.advancePhase(state, emit); // resolve finished phase + advance; may emit deaths/reveals
   }

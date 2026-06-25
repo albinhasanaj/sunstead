@@ -117,6 +117,12 @@ function resolveNight(state: GameState, emit: Emit): void {
   const protectedId: PlayerId | null = state.meta.protect ?? null;
   const victim = target ? state.players.find((p) => p.id === target) : undefined;
 
+  console.log(
+    `[night] resolve — proposals: ${Object.values(proposals).map((id) => nameOf(state, id)).join(', ') || 'none'} | ` +
+      `target: ${target ? nameOf(state, target) : 'none'} | protected: ${protectedId ? nameOf(state, protectedId) : 'none'} | ` +
+      `outcome: ${target && victim?.alive ? (target === protectedId ? 'SAVED' : 'KILL') : 'QUIET'}`,
+  );
+
   // Doctor save: the Mafia DID lock a target, but it was the protected player.
   // Announced anonymously — no one learns who was targeted or who shielded them.
   if (target && victim && victim.alive && target === protectedId) {

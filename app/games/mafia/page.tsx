@@ -57,6 +57,9 @@ export default function Home() {
   // beat (or replaced by the next speaker) so heads turn to whoever is talking.
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Which seat is mid-LLM (deliberating) right now — drives a "thinking…" cue so
+  // the slow AI turns (LLM + memory recall) never feel like a frozen screen.
+  const [thinkingId, setThinkingId] = useState<string | null>(null);
   const [showLog, setShowLog] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
   // Drives the menu→gameplay transition overlay ('play' = role reveal, 'watch' = cinematic).
@@ -72,8 +75,8 @@ export default function Home() {
   const [announce, setAnnounce] = useState<Announce | null>(null);
   const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Brief "night falls" hush played each time the table goes to sleep.
-  const [nightFall, setNightFall] = useState(false);
-  const nightFallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Bumped each time NIGHT begins, to (re)play the night narrator sequence.
+  const [nightKey, setNightKey] = useState(0);
   // Phase countdown + the "ready to move to vote" toggle.
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [wantsSkip, setWantsSkip] = useState(false);
@@ -140,11 +143,9 @@ export default function Home() {
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
           const night = e.phase === 'NIGHT';
           if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
-          if (night) playSfx('night');
           if (night) {
-            setNightFall(true);
-            if (nightFallTimer.current) clearTimeout(nightFallTimer.current);
-            nightFallTimer.current = setTimeout(() => setNightFall(false), 2600);
+            playSfx('night');
+            setNightKey((k) => k + 1); // (re)play the night narrator
           }
           break;
         }
@@ -157,6 +158,9 @@ export default function Home() {
             () => setSpeakingId((cur) => (cur === e.agent ? null : cur)),
             Math.max(2000, (e.text?.length ?? 0) * 60),
           );
+          break;
+        case 'thinking':
+          setThinkingId((cur) => (e.on ? e.agent : cur === e.agent ? null : cur));
           break;
         case 'whisper':
           setFeed((f) => [...f, { k: 'whisper', who: e.agent, text: e.text }]);
@@ -240,6 +244,7 @@ export default function Home() {
       setTurn(null);
       setSelected(null);
       setSpeakingId(null);
+      setThinkingId(null);
       setFindings({});
       setTeammates([]);
       setProtectedId(null);
@@ -386,6 +391,15 @@ export default function Home() {
   const captionVisible = !!speakingId;
   const captionWho = speakingId ?? lastSpeak?.who ?? null;
 
+  // "thinking…" cue (hidden while someone is actually speaking). Anonymous at night
+  // in play mode — night actions are secret, so we never name who's deliberating.
+  const thinkingLabel =
+    thinkingId && !speakingId && running && !winner
+      ? mode === 'play' && phase?.phase === 'NIGHT'
+        ? 'The night unfolds…'
+        : `${nameOf(thinkingId)} is deliberating…`
+      : null;
+
   // ── phase timers (generous; the timer never rushes you) ─────────────────────
   // On your turn it auto-passes if you idle past the clock; during discussion an
   // expired clock raises the "ready to vote" flag (still needs a table majority).
@@ -436,7 +450,6 @@ export default function Home() {
     () => () => {
       clearTimeout(speakTimerRef.current ?? undefined);
       clearTimeout(announceTimer.current ?? undefined);
-      clearTimeout(nightFallTimer.current ?? undefined);
     },
     [],
   );
@@ -494,6 +507,19 @@ export default function Home() {
           <span className={secondsLeft <= 10 ? 'text-amber-300' : ''}>
             ⏱ {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
           </span>
+        </div>
+      )}
+
+      {/* live "thinking…" cue so the slow AI turns never look frozen */}
+      {thinkingLabel && (
+        <div className="pointer-events-none absolute left-1/2 top-16 z-30 -translate-x-1/2 flex items-center gap-2 rounded-full border border-neutral-700/50 bg-neutral-950/60 px-3 py-1 text-xs text-neutral-300 backdrop-blur">
+          <span>{thinkingLabel}</span>
+          <span className="flex gap-1">
+            {[0, 1, 2].map((n) => (
+              <span key={n} className="h-1 w-1 rounded-full bg-amber-300/80" style={{ animation: `thinkDot 1s ease ${n * 0.18}s infinite` }} />
+            ))}
+          </span>
+          <style>{`@keyframes thinkDot { 0%,100% { opacity:.2 } 50% { opacity:1 } }`}</style>
         </div>
       )}
 
@@ -566,22 +592,10 @@ export default function Home() {
       {/* menu → gameplay transition (role reveal for play, cinematic for watch) */}
       {intro && <IntroOverlay mode={intro} role={myRole} onDone={() => setIntro(null)} />}
 
-      {/* night-falls transition — a brief hush as the town goes to sleep */}
-      {nightFall && (
-        <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center">
-          <div className="nightfall-veil absolute inset-0 bg-gradient-to-b from-black via-[#050810]/90 to-black" />
-          <div className="nightfall-text relative text-center">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.5em] text-indigo-300/70">Night falls</div>
-            <div className="mt-2 text-2xl font-light tracking-[0.25em] text-indigo-100/90">the town sleeps…</div>
-          </div>
-          <style>{`
-            @keyframes nightVeil { 0%{opacity:0} 25%{opacity:1} 70%{opacity:1} 100%{opacity:0} }
-            @keyframes nightText { 0%{opacity:0; transform:translateY(8px)} 30%{opacity:1; transform:translateY(0)} 70%{opacity:1} 100%{opacity:0; transform:translateY(-6px)} }
-            .nightfall-veil{ animation:nightVeil 2.6s ease forwards }
-            .nightfall-text{ animation:nightText 2.6s ease forwards }
-          `}</style>
-        </div>
-      )}
+      {/* night narrator — calls the roles to "wake up" in sequence so it's clear
+          what's happening. Always calls every role (regardless of who's actually
+          in play) so it never leaks who's alive; your own role is highlighted. */}
+      {running && phase?.phase === 'NIGHT' && <NightNarration key={nightKey} myRole={myRole} />}
 
       {/* dramatic outcome announcement: death (red), doctor-save (teal), quiet (slate) */}
       {announce && (
@@ -772,6 +786,54 @@ function AutoScrollText({ text }: { text?: string }) {
   return (
     <div ref={ref} className="max-h-[4.5rem] overflow-hidden text-sm leading-snug text-neutral-100">
       {text}
+    </div>
+  );
+}
+
+// Night narrator — walks the table through the wake-up ritual: town sleeps →
+// Mafia → Detective → Doctor. It ALWAYS calls every role, whether or not that role
+// is actually in play, so the call leaks nothing about who's alive. Your own role
+// is highlighted in its colour. Purely cosmetic; it just narrates the structure.
+const NIGHT_BEATS: { eyebrow: string; text: string; role: string | null; color: string }[] = [
+  { eyebrow: 'Night falls', text: 'the town closes its eyes…', role: null, color: '#a5b4fc' },
+  { eyebrow: 'The Mafia awaken', text: 'they choose tonight’s victim', role: 'mafia', color: '#e0454f' },
+  { eyebrow: 'The Detective awakens', text: 'seeking out the guilty', role: 'detective', color: '#5fd0ff' },
+  { eyebrow: 'The Doctor awakens', text: 'shielding a soul from harm', role: 'doctor', color: '#2dd4bf' },
+];
+function NightNarration({ myRole }: { myRole: string }) {
+  const [i, setI] = useState(0);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const PER = 2600;
+    let idx = 0;
+    setI(0);
+    const iv = setInterval(() => {
+      idx += 1;
+      if (idx >= NIGHT_BEATS.length) {
+        clearInterval(iv);
+        setTimeout(() => setDone(true), PER);
+        return;
+      }
+      setI(idx);
+    }, PER);
+    return () => clearInterval(iv);
+  }, []);
+  if (done) return null;
+  const b = NIGHT_BEATS[i];
+  const mine = !!b.role && b.role === myRole;
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-[26%] z-30 flex justify-center px-6">
+      <div key={i} className="night-beat text-center">
+        <div className="text-xs font-semibold uppercase tracking-[0.5em]" style={{ color: mine ? b.color : b.color + 'b0', textShadow: `0 0 18px ${b.color}66` }}>
+          {b.eyebrow}
+          {mine && ' — that’s you'}
+        </div>
+        <div className="mt-2 text-lg font-light tracking-[0.22em] text-indigo-50/85">{b.text}</div>
+      </div>
+      <style>{`
+        @keyframes nightBeat { 0%{opacity:0; transform:translateY(8px)} 18%{opacity:1; transform:none} 82%{opacity:1} 100%{opacity:0; transform:translateY(-6px)} }
+        .night-beat { animation: nightBeat 2.6s ease forwards; }
+      `}</style>
     </div>
   );
 }
