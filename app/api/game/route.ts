@@ -1,18 +1,13 @@
 import { runGame } from '@/engine/orchestrator';
 import { withHuman, type HumanController } from '@/engine/human';
-import { takeTurn } from '@/engine/agent';
 import { mafiaGame } from '@/games/mafia';
-import { mostEagerSpeaker } from '@/games/mafia/phases';
 import type { AgentState, GameEvent, GameState, GameTool } from '@/engine/types';
 import { sessions, type GameSession, type HumanChoice } from '@/lib/gameSessions';
 
-// Idle "speaking pressure". While the human holds the DISCUSSION floor but stays
-// silent, the most eager AI jumps in every IDLE_MS so the table never goes dead.
-// After IDLE_MAX fill-ins with no input we pass the turn so the discussion keeps
-// moving — the human can still speak at any moment until then. Night/Vote are
-// silent target-picks, so they're never filled. Both knobs are env-tunable.
-const IDLE_MS = Number(process.env.MAFIA_IDLE_MS ?? 18000);
-const IDLE_MAX = Number(process.env.MAFIA_IDLE_MAX ?? 3);
+// Discussion paces to the client's voice: after each AI beat the loop waits (up to
+// this long) for the client to finish voicing it before the next beat, so AI talk
+// never races ahead of the audio. The wait ends early on a human interjection.
+const PACE_MAX_MS = Number(process.env.MAFIA_PACE_MAX_MS ?? 14000);
 
 // The game is a long-running multi-agent sim; we run it inside a streaming
 // response and push each typed GameEvent to the client as it happens (SSE).
@@ -97,56 +92,59 @@ export async function POST(req: Request) {
         send(e);
       };
 
-      // The human controller: emit a request, park a promise, resume when the
-      // action route resolves it. During DISCUSSION we also let eager AIs fill any
-      // silence so the table never freezes while the human is thinking.
+      // The human controller parks on NIGHT/VOTE turns (silent target-picks) and waits
+      // for the action route to resolve. DISCUSSION no longer parks here at all — the
+      // human isn't a scheduled seat there; they interject in real time (see beatHook).
       const controller_: HumanController = {
         decide(state, agent, tools) {
-          const humanChoice = new Promise<HumanChoice>((resolve) => {
+          return new Promise<HumanChoice>((resolve) => {
             session.pending = { agentId: agent.id, resolve };
             send(requestAction(state, agent, tools));
           });
-          // Only the open DISCUSSION floor gets filled — the night and the vote are
-          // silent target-picks, so a quiet human there is expected, not dead air.
-          return state.phase === 'DISCUSSION' ? fillSilenceWhileIdle(state, agent, humanChoice) : humanChoice;
         },
       };
 
-      // While the human holds the discussion floor, let the most eager AI speak into
-      // any silence so the table never goes dead (the human can still jump in at any
-      // moment). After IDLE_MAX fill-ins with no input, pass the turn so discussion
-      // keeps moving and tell the client its turn is over.
-      async function fillSilenceWhileIdle(
-        state: GameState,
-        human: AgentState,
-        humanChoice: Promise<HumanChoice>,
-      ): Promise<HumanChoice> {
-        const IDLE = Symbol('idle');
-        for (let fills = 0; fills < IDLE_MAX; fills++) {
-          let timer: ReturnType<typeof setTimeout> | undefined;
-          const idle = new Promise<typeof IDLE>((r) => {
-            timer = setTimeout(() => r(IDLE), IDLE_MS);
-          });
-          const winner = await Promise.race([humanChoice, idle]);
-          clearTimeout(timer);
-          if (winner !== IDLE) return humanChoice; // the human acted (or the game ended)
-          if (session.closed || !session.pending) return humanChoice;
+      // Run a human's interjected line as their own seat's tool, so it lands in the
+      // transcript + long-term memory like any spoken line, and mark them as the last
+      // speaker so the next AI reacts to them and no one repeats.
+      async function injectPendingSay(state: GameState): Promise<void> {
+        const say = session.pendingSay;
+        if (!say) return;
+        session.pendingSay = null;
+        const human = state.players.find((p) => p.private.human && p.alive);
+        if (!human) return;
+        const tool = mafiaGame.toolsFor(state, human).find((t) => t.name === say.tool && t.legalIn(state, human));
+        if (!tool) return;
+        try {
+          await tool.execute(say.args ?? {}, { state, agent: human, emit });
+          const disc = state.meta.disc as { last?: string } | undefined;
+          if (disc) disc.last = human.id;
+        } catch (err) {
+          console.error('[say] human interjection failed:', (err as Error).message);
+        }
+      }
 
-          const speakerId = await mostEagerSpeaker(state, [human.id]);
-          const speaker = speakerId ? state.players.find((p) => p.id === speakerId) : undefined;
-          if (!speaker || !speaker.alive) break; // no AI free to step in
-          console.log(`[idle] ${human.name} quiet ${IDLE_MS}ms — ${speaker.name} fills the silence (${fills + 1}/${IDLE_MAX})`);
-          await takeTurn(mafiaGame, state, speaker, emit);
+      // After every AI discussion beat: pace to the client's voice (so talk doesn't
+      // race ahead of the audio) and fold in the human's real-time interjection. The
+      // wait ends early when the human cuts in, and holds open while they're composing
+      // so no AI talks over them.
+      async function beatHook(state: GameState): Promise<void> {
+        if (state.phase !== 'DISCUSSION') return;
+        await injectPendingSay(state);
+        const startSeq = session.voiceDoneSeq ?? 0;
+        const deadline = Date.now() + PACE_MAX_MS;
+        for (;;) {
+          if (session.closed || session.pendingSay) break; // human cut in → react now
+          const composing = (session.composingUntil ?? 0) > Date.now();
+          const voiced = (session.voiceDoneSeq ?? 0) > startSeq;
+          if (!composing && (voiced || Date.now() > deadline)) break;
+          await new Promise<void>((resolve) => {
+            session.wake = resolve; // woken instantly by a say/composing/voiceDone POST
+            setTimeout(resolve, 250); // …and tick, so composing-expiry / deadline are seen
+          });
+          session.wake = null;
         }
-        // Still silent after every fill-in → pass the human's turn so the discussion
-        // advances. They'll be offered the floor again on a later beat.
-        if (session.pending && session.pending.agentId === human.id) {
-          const pending = session.pending;
-          session.pending = null;
-          send({ type: 'turn_over', agent: human.id });
-          pending.resolve(null);
-        }
-        return humanChoice;
+        await injectPendingSay(state);
       }
 
       try {
@@ -192,6 +190,7 @@ export async function POST(req: Request) {
           },
           withHuman(controller_),
           turnDelayMs,
+          beatHook,
         );
       } catch (err) {
         send({ type: 'error', message: (err as Error).message });

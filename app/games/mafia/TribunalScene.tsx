@@ -42,6 +42,7 @@ export type Props = {
   killVotes?: Record<string, string[]>; // mafia: target id → names of who voted to kill them
   thinkingIds?: string[]; // seats currently mid-LLM (deliberating) → overhead think bubble
   addresseeId?: string | null; // who you've clicked to address your next line to
+  revealRoles?: boolean; // watch-mode spectator: reveal every seat's true role overhead
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -373,6 +374,22 @@ function tagFor(
   return null;
 }
 
+// Watch-mode spectator reveal: a seat's TRUE role as an overhead tag. The Mafia are
+// the headline (red); the informative town roles use their established colours.
+// Plain villagers are left untagged to keep the focus on the seats that matter.
+function roleTagFor(role: string): { text: string; color: string } | null {
+  switch (role) {
+    case 'mafia':
+      return { text: 'MAFIA', color: '#e0454f' };
+    case 'detective':
+      return { text: 'DETECTIVE', color: '#6fb4ff' };
+    case 'doctor':
+      return { text: 'DOCTOR', color: '#2dd4bf' };
+    default:
+      return null; // villager / unknown → no tag
+  }
+}
+
 // A capsule "limb" stretched between two local points (for arms). The caller is
 // responsible for adding mesh.geometry to its disposal list.
 function limbBetween(p1: THREE.Vector3, p2: THREE.Vector3, r: number, mat: THREE.Material) {
@@ -399,6 +416,7 @@ type Seat = {
   id: string;
   name: string;
   human: boolean;
+  role: string;
   pos: THREE.Vector3;
   bodyYaw: number;
   grp: THREE.Group | null;
@@ -706,7 +724,7 @@ export default function TribunalScene(props: Props) {
 
         if (human) {
           // You ARE the camera — no figure, just a seat record so others look at you.
-          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, body: null, head: null, skull: null, animPhase: 0, skinMat: null, bodyMat: null, accentMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+          const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, body: null, head: null, skull: null, animPhase: 0, skinMat: null, bodyMat: null, accentMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
           seats.push(seat);
           seatById.set(pl.id, seat);
           return;
@@ -855,7 +873,7 @@ export default function TribunalScene(props: Props) {
           thinkTex, thinkMat, thinkGeo,
         );
 
-        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, body: bodyGrp, head, skull, animPhase: i * 1.7, skinMat, bodyMat, accentMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+        const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, body: bodyGrp, head, skull, animPhase: i * 1.7, skinMat, bodyMat, accentMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
         // a figure built already-dead (e.g. reconnect) starts collapsed, no replay
         if (!pl.alive) {
           const outward = new THREE.Vector3(x, 0, z).normalize();
@@ -878,6 +896,7 @@ export default function TribunalScene(props: Props) {
       for (const pl of players) {
         const s = seatById.get(pl.id);
         if (!s) continue;
+        s.role = pl.role; // keep role fresh (revealed at setup; stable thereafter)
         const wasAlive = s.alive;
         s.alive = pl.alive;
         // Freshly dead → just flip the flag; the render loop plays the collapse +
@@ -1155,10 +1174,15 @@ export default function TribunalScene(props: Props) {
         // billboard the name label toward the camera
         s.label.rotation.y = Math.atan2(camera.position.x - s.label.position.x, camera.position.z - s.label.position.z);
 
-        // overhead secret-status tag — your private role knowledge, made obvious.
-        // Only ever shown to a seated player (never the watch-mode spectator).
+        // overhead secret-status tag. In play mode this is YOUR private role
+        // knowledge, made obvious. In watch mode the spectator reveal (toggleable)
+        // surfaces every seat's TRUE role, so you can watch the Mafia lie.
         if (s.tag && s.tagMat) {
-          let want = isSpectator ? null : tagFor(s.id, p.findings, p.teammates, p.protectedId);
+          let want = isSpectator
+            ? p.revealRoles
+              ? roleTagFor(s.role)
+              : null
+            : tagFor(s.id, p.findings, p.teammates, p.protectedId);
           // kill-vote marker takes over a town target's tag during the Mafia night
           if (!want && isKillTarget) want = { text: `⚔ ${killVoters!.join('·')}`, color: '#e0454f' };
           const key = want ? want.text : '';

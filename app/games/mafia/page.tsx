@@ -23,6 +23,9 @@ export default function Home() {
   const [intro, setIntro] = useState<null | 'play' | 'watch'>(null);
   // Dev-only: force your role for testing (empty = random). Sent to the API.
   const [devRole, setDevRole] = useState('');
+  // Watch mode: reveal every agent's secret role (overhead tags + drawer badges).
+  // Defaults on so spectators can see who the Mafia is; toggle off for a blind watch.
+  const [revealRoles, setRevealRoles] = useState(true);
 
   // Everything that touches the engine — game state, audio pacing, phase timers,
   // and the derived view-model — lives in this one hook.
@@ -95,6 +98,7 @@ export default function Home() {
           killVotes={killVotes}
           thinkingIds={mode === 'play' && phase?.phase === 'NIGHT' ? [] : thinkingIds}
           addresseeId={inDiscussion ? selected : null}
+          revealRoles={mode === 'watch' && revealRoles}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />
@@ -110,6 +114,15 @@ export default function Home() {
       {/* floating controls — top-right cluster. Leave-game is primary; the table
           and transcript drawers sit beside it. Mute lives in the bottom voice dock. */}
       <div className="absolute right-3 top-3 z-50 flex items-center gap-2">
+        {mode === 'watch' && (
+          <button
+            onClick={() => setRevealRoles((v) => !v)}
+            title={revealRoles ? 'Hide each agent’s secret role' : 'Reveal each agent’s secret role'}
+            className={`${FLOAT_BTN} ${revealRoles ? '!border-red-500/40 !text-red-200 hover:!bg-red-500/15' : ''}`}
+          >
+            {revealRoles ? '🕵️ Roles shown' : '🎭 Roles hidden'}
+          </button>
+        )}
         <button onClick={() => setShowPlayers((v) => !v)} title="The table" className={FLOAT_BTN}>
           👥 Players
         </button>
@@ -229,7 +242,7 @@ export default function Home() {
       )}
 
       {/* left drawer — the table (toggled by the Players button) */}
-      <PlayersDrawer open={showPlayers} players={players} selected={selected} onSelect={setSelected} turn={turn} />
+      <PlayersDrawer open={showPlayers} players={players} selected={selected} onSelect={setSelected} turn={turn} hideRoles={mode === 'watch' && !revealRoles} />
 
       {/* right drawer — the full transcript (toggled by the Transcript button) */}
       <TranscriptDrawer open={showLog} feed={feed} nameOf={nameOf} feedEndRef={feedEndRef} />

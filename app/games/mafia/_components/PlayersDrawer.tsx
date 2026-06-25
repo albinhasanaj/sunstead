@@ -10,12 +10,14 @@ export default function PlayersDrawer({
   selected,
   onSelect,
   turn,
+  hideRoles,
 }: {
   open: boolean;
   players: Player[];
   selected: string | null;
   onSelect: (id: string) => void;
   turn: Turn | null;
+  hideRoles?: boolean;
 }) {
   return (
     <div
@@ -41,8 +43,8 @@ export default function PlayersDrawer({
                 {p.name}
                 {p.human && <span className="ml-1 text-[10px] text-amber-400">(you)</span>}
               </span>
-              <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${ROLE_STYLE[p.role] ?? 'border-neutral-700 text-neutral-400'}`}>
-                {p.role === 'unknown' ? '?' : p.role}
+              <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${hideRoles || p.role === 'unknown' ? ROLE_STYLE.unknown : (ROLE_STYLE[p.role] ?? 'border-neutral-700 text-neutral-400')}`}>
+                {hideRoles || p.role === 'unknown' ? '?' : p.role}
               </span>
             </div>
             <div className="mt-0.5 truncate text-[10px] text-neutral-500">{p.human ? 'human player' : p.model}</div>

@@ -39,6 +39,10 @@ export async function runGame(
   onState?: (state: GameState) => void, // called once after setup (lets sinks bind to state)
   turnFn: TurnFn = takeTurn,
   turnDelayMs = 0, // optional spacing between turns to respect provider rate limits
+  // Optional hook run after every beat of a reactive (beatPhases) phase. The SSE
+  // route uses it to pace AI talk to the client's voice and to inject a human's
+  // real-time interjection between beats. A no-op by default (e.g. tests/headless).
+  beatHook?: (state: GameState) => Promise<void>,
 ): Promise<string> {
   const state = def.setup(names);
   onState?.(state);
@@ -65,6 +69,8 @@ export async function runGame(
           if (def.winner(state) !== null) break;
           if (turnDelayMs) await sleep(turnDelayMs);
         }
+        // Pace to the client's voice + fold in any human interjection before the next beat.
+        if (beatHook) await beatHook(state);
       }
     } else if (def.parallelPhases?.includes(state.phase)) {
       // Independent actions (e.g. secret simultaneous votes): every seat

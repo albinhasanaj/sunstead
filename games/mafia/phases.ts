@@ -36,8 +36,11 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
   const meta = state.meta; // Record<string, any> — per-discussion scratch lives here
 
   // Per-discussion state, re-initialised each round (discussion runs once/round).
+  // Budget counts AI beats only — the human is no longer a scheduled seat (they
+  // interject in real time), so they don't consume the round's speaking turns.
   if (!meta.disc || meta.disc.round !== state.round) {
-    meta.disc = { round: state.round, beat: 0, budget: living.length * DISCUSSION_ROUNDS, spoke: {} as Record<PlayerId, number>, last: null as PlayerId | null };
+    const aiCount = living.filter((p) => !p.private.human).length;
+    meta.disc = { round: state.round, beat: 0, budget: aiCount * DISCUSSION_ROUNDS, spoke: {} as Record<PlayerId, number>, last: null as PlayerId | null };
     meta.humanWantsSkip = false; // fresh discussion → no pending skip request
   }
   const d = meta.disc;
@@ -53,7 +56,9 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
   if (d.beat >= d.budget) return null;
 
   const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2) as LogLine[];
-  const candidates = living.filter((p) => p.id !== d.last); // never speak twice in a row
+  // AIs only, and never twice in a row. The human isn't scheduled — they cut in
+  // whenever they want (their line is injected at the beat boundary by the route).
+  const candidates = living.filter((p) => p.id !== d.last && !p.private.human);
 
   // Score every candidate, take the keenest, and COMMIT the pick (spend a beat of the
   // round's speaking budget). Shared by the sync free path and the async live path.
@@ -61,8 +66,7 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
     let bestId: PlayerId | null = null;
     let bestScore = -Infinity;
     for (const p of candidates) {
-      let s = urge(state, p, recent, d);
-      if (p.private.human) s += 0.5; // keep offering a human the floor regularly
+      const s = urge(state, p, recent, d);
       if (DEBUG_URGE) console.log(`[urge] r${state.round} b${d.beat} ${p.name.padEnd(9)} ${s.toFixed(3)}`);
       if (s > bestScore) { bestScore = s; bestId = p.id; }
     }

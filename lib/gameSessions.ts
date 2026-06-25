@@ -20,6 +20,18 @@ export interface GameSession {
   // human's "ready to vote" skip) that the running game loop reads. Same object the
   // orchestrator mutates — set once when the game starts.
   state?: GameState | null;
+  // Real-time discussion: the human isn't a scheduled seat — they interject. A line
+  // they submit lands here and the SSE loop injects it at the next beat boundary.
+  pendingSay?: { tool: string; args: any } | null;
+  // Epoch (ms) until which the human is actively composing (recording/typing): while
+  // set, the loop holds — it won't let an AI take the floor over them.
+  composingUntil?: number;
+  // Bumped each time the client finishes voicing a line; the loop waits for the next
+  // bump before the next beat, so AI talk paces to the audio instead of racing ahead.
+  voiceDoneSeq?: number;
+  // Resolver that wakes the loop's current pacing wait the instant a client signal
+  // (say / composing / voice-done) arrives, so it reacts without polling latency.
+  wake?: (() => void) | null;
 }
 
 const g = globalThis as unknown as { __mafiaSessions?: Map<string, GameSession> };
