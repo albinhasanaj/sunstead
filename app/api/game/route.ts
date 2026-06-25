@@ -77,6 +77,7 @@ export async function POST(req: Request) {
           emit,
           (state: GameState) => {
             state.meta.gameId = gameId; // align long-term memory with this SSE session
+            session.state = state; // let the action route flip control flags (e.g. skip-to-vote)
             if (mode === 'play') {
               const h = state.players.find((p) => p.name === HUMAN_NAME);
               if (h) {

@@ -24,8 +24,18 @@ export function nextSpeaker(state: GameState): PlayerId | null {
   // Per-discussion state, re-initialised each round (discussion runs once/round).
   if (!meta.disc || meta.disc.round !== state.round) {
     meta.disc = { round: state.round, beat: 0, budget: living.length * DISCUSSION_ROUNDS, spoke: {} as Record<PlayerId, number>, last: null as PlayerId | null };
+    meta.humanWantsSkip = false; // fresh discussion → no pending skip request
   }
   const d = meta.disc;
+
+  // Consensus skip-to-vote: if the human has asked to move on AND a majority of the
+  // living table is ready (the human + every AI that has already said its piece),
+  // end discussion early. Otherwise the request is ignored and discussion continues.
+  if (meta.humanWantsSkip) {
+    const ready = living.filter((p) => p.private.human || (d.spoke[p.id] ?? 0) >= DISCUSSION_ROUNDS).length;
+    if (ready * 2 > living.length) return null;
+  }
+
   if (d.beat >= d.budget) return null;
 
   const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2);
