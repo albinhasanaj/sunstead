@@ -57,6 +57,12 @@ export default function Home() {
   // beat (or replaced by the next speaker) so heads turn to whoever is talking.
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Speak lines are revealed one at a time at reading pace (not as they stream in),
+  // so the caption, the voice, and the transcript stay in sync and never race ahead.
+  const speakQueue = useRef<{ agent: string; text: string }[]>([]);
+  const speakActive = useRef(false);
+  const pumpRef = useRef<() => void>(() => {});
+  const flushSpeakRef = useRef<() => void>(() => {});
   // Which seat is mid-LLM (deliberating) right now — drives a "thinking…" cue so
   // the slow AI turns (LLM + memory recall) never feel like a frozen screen.
   const [thinkingId, setThinkingId] = useState<string | null>(null);
@@ -111,6 +117,39 @@ export default function Home() {
   playersRef.current = players;
   const nameOf = useCallback((id: string) => playersRef.current.find((p) => p.id === id)?.name ?? id, []);
 
+  // Reveal the next queued line: show it in the caption + transcript, speak it, and
+  // hold for a reading-time-based beat before advancing. Re-assigned each render so
+  // it always closes over current `voice`/`nameOf`.
+  pumpRef.current = () => {
+    if (speakActive.current) return;
+    const item = speakQueue.current.shift();
+    if (!item) {
+      setSpeakingId(null);
+      return;
+    }
+    speakActive.current = true;
+    setSpeakingId(item.agent);
+    setFeed((f) => [...f, { k: 'speak', who: item.agent, text: item.text }]);
+    voice.enqueue(nameOf(item.agent), item.text);
+    // pace ≈ how long it takes to read/say the line (also ≈ the TTS length)
+    const dur = Math.min(9000, Math.max(2600, item.text.length * 55));
+    if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
+    speakTimerRef.current = setTimeout(() => {
+      speakActive.current = false;
+      pumpRef.current();
+    }, dur);
+  };
+  // Dump any still-queued lines into the transcript at once (e.g. on a phase change),
+  // so a new phase never starts with stale captions still trickling out.
+  flushSpeakRef.current = () => {
+    if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
+    const rest = speakQueue.current;
+    speakQueue.current = [];
+    if (rest.length) setFeed((f) => [...f, ...rest.map((it) => ({ k: 'speak' as const, who: it.agent, text: it.text }))]);
+    speakActive.current = false;
+    setSpeakingId(null);
+  };
+
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [feed, turn]);
@@ -140,6 +179,7 @@ export default function Home() {
           setSelected((s) => s ?? e.players.find((p: Player) => p.human)?.id ?? null);
           break;
         case 'phase': {
+          flushSpeakRef.current(); // reveal any leftover lines before the phase turns over
           setPhase({ phase: e.phase, round: e.round });
           setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
@@ -150,14 +190,10 @@ export default function Home() {
           break;
         }
         case 'speak':
-          setFeed((f) => [...f, { k: 'speak', who: e.agent, text: e.text }]);
-          voice.enqueue(nameOf(e.agent), e.text);
-          setSpeakingId(e.agent);
-          if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
-          speakTimerRef.current = setTimeout(
-            () => setSpeakingId((cur) => (cur === e.agent ? null : cur)),
-            Math.max(2000, (e.text?.length ?? 0) * 60),
-          );
+          // Don't show/speak immediately — queue it and let the paced pump reveal it
+          // at reading speed, so captions/voice/transcript stay together.
+          speakQueue.current.push({ agent: e.agent, text: e.text });
+          pumpRef.current();
           break;
         case 'thinking':
           setThinkingId((cur) => (e.on ? e.agent : cur === e.agent ? null : cur));
@@ -220,6 +256,7 @@ export default function Home() {
           break;
         }
         case 'win':
+          flushSpeakRef.current();
           setWinner(e.winner);
           setFeed((f) => [...f, { k: 'win', winner: e.winner }]);
           playSfx('win');
@@ -250,6 +287,9 @@ export default function Home() {
       setSpeakingId(null);
       setThinkingId(null);
       setNightWake(null);
+      speakQueue.current = [];
+      speakActive.current = false;
+      if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
       setFindings({});
       setTeammates([]);
       setProtectedId(null);
@@ -466,6 +506,7 @@ export default function Home() {
           myId={humanId}
           myRole={myRole}
           speakingId={speakingId}
+          thinkingId={thinkingId}
           accusedId={selected && selected !== humanId ? selected : null}
           turn={turn}
           findings={findings}
