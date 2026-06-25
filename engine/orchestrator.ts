@@ -59,6 +59,7 @@ export async function runGame(
       while ((id = def.nextSpeaker(state)) !== null) {
         const agent = state.players.find((p) => p.id === id);
         if (agent && agent.alive) {
+          def.onTurnStart?.(state, agent, emit);
           await turnFn(def, state, agent, emit);
           if (def.winner(state) !== null) break;
           if (turnDelayMs) await sleep(turnDelayMs);
@@ -76,6 +77,7 @@ export async function runGame(
       for (const id of def.turnOrder(state)) {
         const agent = state.players.find((p) => p.id === id);
         if (!agent || !agent.alive) continue;
+        def.onTurnStart?.(state, agent, emit);
         await turnFn(def, state, agent, emit);
         // A turn may have ended the game (e.g. last villager voted out mid-tally).
         if (def.winner(state) !== null) break;
