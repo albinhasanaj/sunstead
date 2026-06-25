@@ -151,7 +151,8 @@ const vote: GameTool = {
     ctx.state.meta.votes = ctx.state.meta.votes ?? {};
     ctx.state.meta.votes[ctx.agent.id] = t.id;
     // Publish the vote to the Kafka votes topic via MCP; the tally consumes it back.
-    void publish(TOPIC_VOTES, {
+    // Awaited so the record is in Kafka before the (parallel) phase tallies.
+    await publish(TOPIC_VOTES, {
       kind: 'vote', gameId: ctx.state.meta.gameId as string, round: ctx.state.round,
       voter: ctx.agent.name, voterId: ctx.agent.id, target: t.name, targetId: t.id,
     });

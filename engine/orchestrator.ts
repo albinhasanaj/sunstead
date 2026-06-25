@@ -11,6 +11,23 @@ export type TurnFn = (
   emit: Emit,
 ) => Promise<void>;
 
+// Cap on simultaneous LLM turns in a parallel phase (e.g. voting), so we don't
+// trigger a provider rate-limit burst. Override with MAFIA_PARALLEL_LIMIT.
+const PARALLEL_LIMIT = Number(process.env.MAFIA_PARALLEL_LIMIT ?? 8);
+
+// Run fn over items with at most `limit` of them in flight at once.
+async function runConcurrent<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let i = 0;
+  const n = Math.min(Math.max(1, limit), items.length || 1);
+  const workers = Array.from({ length: n }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+}
+
 // The hand-written game loop. THIS is the product: full control over turn order,
 // phase transitions, and the win check. The AI SDK is only ever called inside
 // takeTurn() — one agent thinking + acting. Everything orchestrating multiple
@@ -44,6 +61,14 @@ export async function runGame(
           if (turnDelayMs) await sleep(turnDelayMs);
         }
       }
+    } else if (def.parallelPhases?.includes(state.phase)) {
+      // Independent actions (e.g. secret simultaneous votes): every seat
+      // deliberates at once, capped so we don't trigger a rate-limit burst.
+      const actors = def
+        .turnOrder(state)
+        .map((id) => state.players.find((p) => p.id === id))
+        .filter((a): a is AgentState => !!a && a.alive);
+      await runConcurrent(actors, PARALLEL_LIMIT, (agent) => turnFn(def, state, agent, emit));
     } else {
       for (const id of def.turnOrder(state)) {
         const agent = state.players.find((p) => p.id === id);

@@ -53,6 +53,9 @@ export interface GameDefinition {
   // until it returns null.
   beatPhases?: string[];
   nextSpeaker?: (state: GameState) => PlayerId | null;
+  // Phases whose turns are independent (e.g. secret simultaneous voting) and may
+  // run concurrently instead of one at a time.
+  parallelPhases?: string[];
   // Resolve the phase that just finished and mutate state to the next phase.
   // Gets `emit` so resolution can announce deaths / reveals.
   advancePhase: (state: GameState, emit: Emit) => void | Promise<void>;
