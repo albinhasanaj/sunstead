@@ -30,6 +30,7 @@ export type Props = {
   myId: string | null;
   myRole: string; // 'mafia' | 'villager' | 'detective' | 'doctor' | 'unknown'
   speakingId: string | null;
+  thinkingId?: string | null; // seat mid-deliberation → "pondering" body language
   accusedId: string | null;
   turn: any | null; // raw request_action payload, or null
   onSelect: (playerId: string) => void;
@@ -372,6 +373,18 @@ function tagFor(
   return null;
 }
 
+// A capsule "limb" stretched between two local points (for arms). The caller is
+// responsible for adding mesh.geometry to its disposal list.
+function limbBetween(p1: THREE.Vector3, p2: THREE.Vector3, r: number, mat: THREE.Material) {
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  const len = Math.max(0.02, dir.length() - r * 2);
+  const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 6, 14), mat);
+  mesh.position.copy(p1).add(p2).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+  mesh.castShadow = true;
+  return mesh;
+}
+
 const lerpNum = (a: number, b: number, t: number) => a + (b - a) * t;
 function lerpAngle(a: number, b: number, t: number) {
   let d = b - a;
@@ -389,10 +402,13 @@ type Seat = {
   pos: THREE.Vector3;
   bodyYaw: number;
   grp: THREE.Group | null;
+  body: THREE.Group | null; // torso group (yaw-oriented) — animated for gestures
   head: THREE.Group | null;
   skull: THREE.Mesh | null;
+  animPhase: number; // per-seat offset so idle motion is desynced
   skinMat: THREE.MeshPhysicalMaterial | null;
   bodyMat: THREE.MeshPhysicalMaterial | null;
+  accentMat: THREE.MeshStandardMaterial | null; // glowing brand sigil / trim
   ring: THREE.Mesh | null;
   label: THREE.Mesh | null;
   tag: THREE.Mesh | null;
@@ -498,22 +514,17 @@ export default function TribunalScene(props: Props) {
     const fx = new THREE.Group();
     scene.add(fx);
 
-    const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(4.2, 8.5, 48, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0xffdca0, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending }),
-    );
-    cone.position.set(0, 4.5, 0);
-    fx.add(cone);
-
     // ── environment ──
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 80), new THREE.MeshStandardMaterial({ color: 0x06070c, roughness: 0.22, metalness: 0.8 }));
+    // polished reflective floor
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96), new THREE.MeshStandardMaterial({ color: 0x04050a, roughness: 0.14, metalness: 0.92 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
-    [6.5, 9.5, 13].forEach((rad, i) => {
-      const g = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.012, 8, 160), new THREE.MeshBasicMaterial({ color: 0x1c2b46, transparent: true, opacity: 0.5 - i * 0.12 }));
+    // concentric cool light-rings inlaid in the floor
+    [4.6, 6.8, 9.4, 12.6, 16].forEach((rad, i) => {
+      const g = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.015, 8, 220), new THREE.MeshBasicMaterial({ color: 0x2a4f86, transparent: true, opacity: 0.55 - i * 0.09 }));
       g.rotation.x = -Math.PI / 2;
-      g.position.y = 0.01;
+      g.position.y = 0.012;
       fx.add(g);
     });
 
@@ -522,43 +533,57 @@ export default function TribunalScene(props: Props) {
       [0.85, 0.24], [0.5, 0.12], [0.46, 0.0], [1.35, -0.0], [1.35, -0.02], [0.0, -0.02],
     ].map((p) => new THREE.Vector2(p[0], p[1]));
     const table = new THREE.Mesh(
-      new THREE.LatheGeometry(tprofile, 96),
-      new THREE.MeshPhysicalMaterial({ color: 0x0e121b, roughness: 0.18, metalness: 0.5, clearcoat: 1, clearcoatRoughness: 0.25 }),
+      new THREE.LatheGeometry(tprofile, 120),
+      new THREE.MeshPhysicalMaterial({ color: 0x0c1018, roughness: 0.15, metalness: 0.65, clearcoat: 1, clearcoatRoughness: 0.18 }),
     );
     table.castShadow = true;
     table.receiveShadow = true;
     scene.add(table);
-    const rimRing = new THREE.Mesh(new THREE.TorusGeometry(3.34, 0.03, 16, 200), new THREE.MeshBasicMaterial({ color: 0x3b6ea5 }));
+    const rimRing = new THREE.Mesh(new THREE.TorusGeometry(3.34, 0.03, 16, 220), new THREE.MeshBasicMaterial({ color: 0x5aa0e0 }));
     rimRing.rotation.x = -Math.PI / 2;
     rimRing.position.y = 0.43;
     fx.add(rimRing);
-    const emblem = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.02, 12, 96), new THREE.MeshBasicMaterial({ color: 0x2c3550, transparent: true, opacity: 0.7 }));
+    const emblem = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.02, 12, 96), new THREE.MeshBasicMaterial({ color: 0x35507a, transparent: true, opacity: 0.7 }));
     emblem.rotation.x = -Math.PI / 2;
     emblem.position.y = 0.43;
     fx.add(emblem);
 
-    const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 4, 8), new THREE.MeshBasicMaterial({ color: 0x222633 }));
-    wire.position.y = 10.3;
-    scene.add(wire);
-    const shade = new THREE.Mesh(new THREE.ConeGeometry(0.9, 0.7, 32, 1, true), new THREE.MeshStandardMaterial({ color: 0x14171f, side: THREE.DoubleSide, roughness: 0.5, metalness: 0.6 }));
-    shade.position.y = 8.3;
-    scene.add(shade);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.26, 20, 16), new THREE.MeshBasicMaterial({ color: 0xffe9c2 }));
-    bulb.position.y = 8.05;
-    fx.add(bulb);
+    // Overhead fixture: cool concentric glowing rings (replaces the old warm bulb).
+    // This is what the key SpotLight reads as — clean and modern, never yellow.
+    const haloMat = new THREE.MeshBasicMaterial({ color: 0xbcd2ff });
+    [2.7, 1.7, 0.85].forEach((rad, i) => {
+      const halo = new THREE.Mesh(new THREE.TorusGeometry(rad, 0.035 - i * 0.006, 16, 220), haloMat);
+      halo.rotation.x = -Math.PI / 2;
+      halo.position.y = 7.2;
+      fx.add(halo);
+    });
+    // thin dark struts holding the fixture (structural, stays visible)
+    const strutMat = new THREE.MeshStandardMaterial({ color: 0x10131c, roughness: 0.5, metalness: 0.7 });
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2;
+      const strut = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 4.2, 8), strutMat);
+      strut.position.set(Math.cos(a) * 2.5, 9.0, Math.sin(a) * 2.5);
+      scene.add(strut);
+    }
 
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x0b0d14, roughness: 0.7, metalness: 0.3 });
-    for (let i = 0; i < 12; i++) {
-      const a = (i / 12) * Math.PI * 2;
+    // ring of pillars fading into the fog, with glowing capitals
+    const pillarMat = new THREE.MeshStandardMaterial({ color: 0x0a0c14, roughness: 0.55, metalness: 0.45 });
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
       const rad = 15.5;
       const px = Math.cos(a) * rad;
       const pz = Math.sin(a) * rad;
-      const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.7, 11, 16), pillarMat);
-      pil.position.set(px, 5.0, pz);
+      const pil = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.66, 12, 20), pillarMat);
+      pil.position.set(px, 5.2, pz);
+      pil.castShadow = true;
       scene.add(pil);
-      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.06, 7, 0.06), new THREE.MeshBasicMaterial({ color: 0x223a5e, transparent: true, opacity: 0.55 }));
-      strip.position.set(px * 0.95, 5.0, pz * 0.95);
+      const strip = new THREE.Mesh(new THREE.BoxGeometry(0.05, 7.5, 0.05), new THREE.MeshBasicMaterial({ color: 0x2a4a78, transparent: true, opacity: 0.5 }));
+      strip.position.set(px * 0.96, 5.2, pz * 0.96);
       fx.add(strip);
+      const cap = new THREE.Mesh(new THREE.TorusGeometry(0.56, 0.035, 10, 28), new THREE.MeshBasicMaterial({ color: 0x3a6bb0, transparent: true, opacity: 0.7 }));
+      cap.rotation.x = -Math.PI / 2;
+      cap.position.set(px, 11.0, pz);
+      fx.add(cap);
     }
 
     const DUST = 480;
@@ -681,7 +706,7 @@ export default function TribunalScene(props: Props) {
 
         if (human) {
           // You ARE the camera — no figure, just a seat record so others look at you.
-          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, head: null, skull: null, skinMat: null, bodyMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+          const seat: Seat = { id: pl.id, name: pl.name, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, body: null, head: null, skull: null, animPhase: 0, skinMat: null, bodyMat: null, accentMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
           seats.push(seat);
           seatById.set(pl.id, seat);
           return;
@@ -691,28 +716,105 @@ export default function TribunalScene(props: Props) {
         grp.position.set(x, 0, z);
         scene.add(grp);
 
-        const bodyMat = new THREE.MeshPhysicalMaterial({ color: baseColor.clone(), roughness: 0.32, metalness: 0.3, clearcoat: 1, clearcoatRoughness: 0.3 });
-        const bprofile = [
-          [0.0, 0.2], [0.4, 0.22], [0.46, 0.45], [0.4, 0.78], [0.34, 1.0],
-          [0.46, 1.18], [0.58, 1.34], [0.52, 1.44], [0.22, 1.5], [0.15, 1.62], [0.13, 1.72], [0.0, 1.74],
-        ].map((p) => new THREE.Vector2(p[0], p[1]));
-        const bustGeo = new THREE.LatheGeometry(bprofile, 64);
-        const bust = new THREE.Mesh(bustGeo, bodyMat);
-        bust.castShadow = true;
-        grp.add(bust);
+        // ── materials ── (a structured, metallic robot)
+        // brand-coloured plating (drains to grey on death)
+        const bodyMat = new THREE.MeshPhysicalMaterial({ color: baseColor.clone(), roughness: 0.36, metalness: 0.86, clearcoat: 0.6, clearcoatRoughness: 0.25 });
+        // glowing brand accents (joints, reactor, eye-line)
+        const accentMat = new THREE.MeshStandardMaterial({ color: baseColor.clone(), emissive: baseColor.clone(), emissiveIntensity: 0.55, roughness: 0.3, metalness: 0.4 });
+        // dark gunmetal for joints, frame, head casing
+        const metalMat = new THREE.MeshStandardMaterial({ color: 0x14171f, roughness: 0.4, metalness: 0.95 });
+        // dark base the robot is seated on
+        const stoneMat = new THREE.MeshStandardMaterial({ color: 0x0b0d15, roughness: 0.85, metalness: 0.18 });
 
+        // figure geometries to dispose on rebuild (collected as we build)
+        const figGeo: THREE.BufferGeometry[] = [];
+        // non-symmetric parts face the table; bodyGrp carries the yaw.
+        const bodyGrp = new THREE.Group();
+        bodyGrp.rotation.y = bodyYaw;
+        grp.add(bodyGrp);
+        const addMesh = (geo: THREE.BufferGeometry, mat: THREE.Material, parent: THREE.Object3D = bodyGrp) => {
+          const m = new THREE.Mesh(geo, mat);
+          m.castShadow = true;
+          m.receiveShadow = true;
+          figGeo.push(geo);
+          parent.add(m);
+          return m;
+        };
+        const addLimb = (p1: THREE.Vector3, p2: THREE.Vector3, r: number, mat: THREE.Material) => {
+          const m = limbBetween(p1, p2, r, mat);
+          figGeo.push(m.geometry);
+          bodyGrp.add(m);
+          return m;
+        };
+
+        // seated base / plinth
+        const plinthGeo = new THREE.LatheGeometry([[0, 0], [0.72, 0], [0.74, 0.06], [0.62, 0.13], [0.58, 0.18], [0, 0.18]].map((p) => new THREE.Vector2(p[0], p[1])), 56);
+        addMesh(plinthGeo, stoneMat, grp).position.y = -0.02;
+
+        // hips / waist (gunmetal)
+        addMesh(new THREE.CylinderGeometry(0.32, 0.4, 0.32, 24), metalMat).position.y = 0.6;
+        // torso core (brand plating)
+        addMesh(new THREE.CylinderGeometry(0.3, 0.42, 0.74, 28), bodyMat).position.y = 1.04;
+        // chest plate (brand) + a glowing reactor sigil on the front
+        addMesh(new THREE.BoxGeometry(0.6, 0.58, 0.3), bodyMat).position.set(0, 1.12, 0.14);
+        addMesh(new THREE.TorusGeometry(0.1, 0.03, 16, 36), accentMat).position.set(0, 1.16, 0.32);
+        addMesh(new THREE.SphereGeometry(0.05, 14, 12), accentMat).position.set(0, 1.16, 0.33);
+        // back pack / spine unit
+        addMesh(new THREE.BoxGeometry(0.34, 0.5, 0.16), metalMat).position.set(0, 1.12, -0.22);
+
+        // shoulders → upper arm → elbow → forearm → hand resting on the table rim
+        for (const sgn of [-1, 1]) {
+          addMesh(new THREE.SphereGeometry(0.16, 18, 14), metalMat).position.set(sgn * 0.42, 1.34, 0);
+          const pauldron = addMesh(new THREE.SphereGeometry(0.21, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.5), bodyMat);
+          pauldron.position.set(sgn * 0.42, 1.36, 0);
+          const elbow = new THREE.Vector3(sgn * 0.52, 1.0, 0.3);
+          addLimb(new THREE.Vector3(sgn * 0.42, 1.32, 0), elbow, 0.1, bodyMat);
+          addMesh(new THREE.SphereGeometry(0.1, 14, 12), accentMat).position.copy(elbow);
+          const hand = new THREE.Vector3(sgn * 0.3, 0.5, 0.86); // rests on the table edge
+          addLimb(elbow, hand, 0.085, bodyMat);
+          addMesh(new THREE.BoxGeometry(0.17, 0.1, 0.24), metalMat).position.copy(hand);
+        }
+
+        // neck (gunmetal)
+        addMesh(new THREE.CylinderGeometry(0.1, 0.13, 0.22, 16), metalMat).position.y = 1.52;
+
+        // ── head (turns to look around; the logo is its faceplate) ──
         const head = new THREE.Group();
-        head.position.y = 1.86;
+        head.position.y = 1.9;
         head.rotation.y = bodyYaw;
         grp.add(head);
+
+        // The head is a "screen face": the logo faceplate is the hero and stays
+        // fully visible. A thin metal shell sits only BEHIND it, and a glowing
+        // bezel frames the front like a monitor.
         const skin = makeHeadSkin(pl.name, color);
-        const skinMat = new THREE.MeshPhysicalMaterial({ map: skin, roughness: 0.4, metalness: 0.2, clearcoat: 0.7, clearcoatRoughness: 0.3, emissive: 0xffffff, emissiveMap: skin, emissiveIntensity: 0 });
-        const skullGeo = new THREE.SphereGeometry(0.32, 40, 28);
+        const skinMat = new THREE.MeshPhysicalMaterial({ map: skin, roughness: 0.3, metalness: 0.2, clearcoat: 0.9, clearcoatRoughness: 0.18, emissive: 0xffffff, emissiveMap: skin, emissiveIntensity: 0.12 });
+        const skullGeo = new THREE.SphereGeometry(0.34, 48, 32);
         const skull = new THREE.Mesh(skullGeo, skinMat);
-        skull.scale.set(1, 1.1, 0.95);
+        skull.scale.set(1.04, 1.08, 0.9);
         skull.rotation.y = -Math.PI / 2; // bring painted logo to the front
         skull.castShadow = true;
         head.add(skull);
+
+        // back shell only (a sphere pushed back so it never overlaps the face)
+        const shell = addMesh(new THREE.SphereGeometry(0.36, 30, 24), metalMat, head);
+        shell.scale.set(1.04, 1.08, 0.7);
+        shell.position.z = -0.16;
+        // glowing bezel framing the faceplate (front rim)
+        const bezel = addMesh(new THREE.TorusGeometry(0.34, 0.022, 14, 48), accentMat, head);
+        bezel.position.z = 0.05;
+        // side "ear" actuators
+        for (const sgn of [-1, 1]) {
+          const ear = addMesh(new THREE.CylinderGeometry(0.07, 0.085, 0.09, 18), metalMat, head);
+          ear.rotation.z = Math.PI / 2;
+          ear.position.set(sgn * 0.34, -0.02, -0.04);
+          const earGlow = addMesh(new THREE.CylinderGeometry(0.045, 0.045, 0.1, 14), accentMat, head);
+          earGlow.rotation.z = Math.PI / 2;
+          earGlow.position.set(sgn * 0.385, -0.02, -0.04);
+        }
+        // antenna with a glowing tip
+        addMesh(new THREE.CylinderGeometry(0.012, 0.012, 0.34, 8), metalMat, head).position.set(0, 0.42, -0.1);
+        addMesh(new THREE.SphereGeometry(0.04, 12, 10), accentMat, head).position.set(0, 0.6, -0.1);
 
         const nameTex = makeName(pl.name);
         const labelMat = new THREE.MeshBasicMaterial({ map: nameTex, transparent: true, depthWrite: false });
@@ -746,9 +848,14 @@ export default function TribunalScene(props: Props) {
         think.visible = false;
         grp.add(think);
 
-        owned.push(bustGeo, bodyMat, skullGeo, skinMat, skin, nameTex, labelMat, labelGeo, ringGeo, ringMat, tagGeo, tagMat, thinkTex, thinkMat, thinkGeo);
+        owned.push(
+          ...figGeo,
+          bodyMat, accentMat, metalMat, stoneMat,
+          skullGeo, skinMat, skin, nameTex, labelMat, labelGeo, ringGeo, ringMat, tagGeo, tagMat,
+          thinkTex, thinkMat, thinkGeo,
+        );
 
-        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, head, skull, skinMat, bodyMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+        const seat: Seat = { id: pl.id, name: pl.name, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, body: bodyGrp, head, skull, animPhase: i * 1.7, skinMat, bodyMat, accentMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
         // a figure built already-dead (e.g. reconnect) starts collapsed, no replay
         if (!pl.alive) {
           const outward = new THREE.Vector3(x, 0, z).normalize();
@@ -779,6 +886,8 @@ export default function TribunalScene(props: Props) {
           // (defensive) revived → restore
           s.bodyMat?.color.copy(s.baseColor);
           s.skinMat?.color.set(0xffffff);
+          s.accentMat?.color.copy(s.baseColor);
+          s.accentMat?.emissive.copy(s.baseColor);
           s.deathAnim = 0;
           s.deathInit = false;
           if (s.grp) {
@@ -885,8 +994,6 @@ export default function TribunalScene(props: Props) {
     const cRim = new THREE.Color();
     const cFog = new THREE.Color();
     const cBg = new THREE.Color();
-    const cBulbOn = new THREE.Color();
-    const cBulbOff = new THREE.Color(0x101010);
     const cWork = new THREE.Color(); // scratch colour for per-seat lerps
     let t = 0;
     let raf = 0;
@@ -935,7 +1042,6 @@ export default function TribunalScene(props: Props) {
       rim.color.lerp(cRim.set(v.rim), 0.06);
       rim.intensity += (v.rimI - rim.intensity) * 0.06;
       bloom.strength += (v.bloom - bloom.strength) * 0.06;
-      (bulb.material as THREE.MeshBasicMaterial).color.lerp(v.lampI > 5 ? cBulbOn.set(v.lamp) : cBulbOff, 0.06);
 
       // whoever holds the floor (accused first, else current speaker) is the focus
       const focus = p.accusedId ? seatById.get(p.accusedId) : p.speakingId ? seatById.get(p.speakingId) : undefined;
@@ -975,6 +1081,11 @@ export default function TribunalScene(props: Props) {
           // desaturate body + head as they fall
           if (s.bodyMat) s.bodyMat.color.lerp(cAmb.set(0x3a3d46), 0.08);
           if (s.skinMat) s.skinMat.color.lerp(cLamp.set(0x6a6d76), 0.08);
+          if (s.accentMat) {
+            s.accentMat.emissiveIntensity = lerpNum(s.accentMat.emissiveIntensity, 0, 0.1);
+            s.accentMat.color.lerp(cAmb.set(0x3a3d46), 0.08);
+            s.accentMat.emissive.lerp(cAmb.set(0x101216), 0.08);
+          }
         } else {
           // turn head toward the focal person; the focal person looks at the table
           let yaw = s.bodyYaw;
@@ -986,13 +1097,31 @@ export default function TribunalScene(props: Props) {
         }
 
         const talking = !p.accusedId && p.speakingId === s.id && s.alive;
-        // sleeping town bow their heads; everyone else holds talking/idle pitch.
-        const headPitch = sleeping ? 0.5 : talking ? Math.sin(t * 34) * 0.05 : 0;
+        const thinking = s.alive && !talking && !sleeping && p.thinkingId === s.id;
+        // sleeping town bow their heads; talkers nod; thinkers glance down a touch.
+        const headPitch = sleeping ? 0.5 : talking ? Math.sin(t * 34) * 0.05 : thinking ? 0.1 : 0;
         if (s.alive) s.head.rotation.x = lerpNum(s.head.rotation.x, headPitch, sleeping ? 0.08 : 0.18);
+
+        // ── expressive body language (alive only) ──
+        if (s.alive && s.body) {
+          const ph = s.animPhase;
+          // torso: lean in to speak, ponder-sway while thinking, gentle breathing at rest
+          const leanX = talking ? 0.12 + Math.sin(t * 7 + ph) * 0.025 : thinking ? 0.06 : sleeping ? 0.07 : 0;
+          const swayZ = talking ? Math.sin(t * 4 + ph) * 0.045 : thinking ? Math.sin(t * 2.1 + ph) * 0.06 : Math.sin(t * 0.8 + ph) * 0.014;
+          s.body.rotation.x = lerpNum(s.body.rotation.x, leanX, 0.07);
+          s.body.rotation.z = lerpNum(s.body.rotation.z, swayZ, 0.05);
+          const bob = Math.sin(t * (talking ? 9 : 1.1) + ph) * (talking ? 0.013 : 0.006);
+          s.body.position.y = lerpNum(s.body.position.y, bob, 0.1);
+          // head: cock to one side while deliberating
+          const tilt = thinking ? 0.16 + Math.sin(t * 1.6 + ph) * 0.04 : 0;
+          s.head.rotation.z = lerpNum(s.head.rotation.z, tilt, 0.06);
+        }
 
         // awake allies get a soft pulse; sleeping town go dark.
         const glowI = talking ? 0.45 + Math.sin(t * 18) * 0.2 : p.accusedId === s.id ? 0.5 : isAlly ? 0.22 + Math.sin(t * 5) * 0.08 : 0;
         if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, glowI, 0.12);
+        // the chest sigil breathes with a base glow, brightening when speaking
+        if (s.alive && s.accentMat) s.accentMat.emissiveIntensity = lerpNum(s.accentMat.emissiveIntensity, sleeping ? 0.04 : 0.3 + glowI * 1.2, 0.1);
 
         // who voted to kill this seat (Mafia, at night, from your seat only)
         const killVoters = !isSpectator && p.phase === 'NIGHT' && p.myRole === 'mafia' ? p.killVotes?.[s.id] : undefined;

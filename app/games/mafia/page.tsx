@@ -166,6 +166,7 @@ export default function Home() {
           setSelected((s) => s ?? e.players.find((p: Player) => p.human)?.id ?? null);
           break;
         case 'phase': {
+          voice.reset(); // drop any leftover spoken backlog before the phase turns over
           setPhase({ phase: e.phase, round: e.round });
           setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
@@ -261,6 +262,7 @@ export default function Home() {
           setTurn((t) => (t && t.agent === e.agent ? null : t));
           break;
         case 'win':
+          voice.reset();
           setWinner(e.winner);
           setFeed((f) => [...f, { k: 'win', winner: e.winner }]);
           playSfx('win');
@@ -293,6 +295,7 @@ export default function Home() {
       setVoiceIdle(true);
       setThinkingIds([]);
       setNightWake(null);
+      if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
       setFindings({});
       setTeammates([]);
       setProtectedId(null);
@@ -538,6 +541,7 @@ export default function Home() {
           myId={humanId}
           myRole={myRole}
           speakingId={speakingId}
+          thinkingId={mode === 'play' && phase?.phase === 'NIGHT' ? null : (thinkingIds[0] ?? null)}
           accusedId={selected && selected !== humanId ? selected : null}
           turn={turn}
           findings={findings}
