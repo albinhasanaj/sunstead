@@ -835,6 +835,18 @@ function ActionStyles() {
 .tribunal-action--danger:hover:not(:disabled){ border-color:rgba(255,140,140,.85);
   box-shadow: inset 0 1px 0 rgba(255,180,180,.3), 0 10px 26px rgba(140,0,0,.55),
               0 0 30px rgba(230,50,50,.4); }
+.tribunal-action--join{
+  color:#1a1206; border-color:rgba(255,200,110,.65);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.35), rgba(255,255,255,0) 45%),
+    linear-gradient(180deg, #ffcf6e, #f0a93a);
+  text-shadow:none;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.5),
+              inset 0 -2px 6px rgba(120,70,0,.4), 0 6px 18px rgba(0,0,0,.5),
+              0 0 22px rgba(240,170,60,.3); }
+.tribunal-action--join:hover:not(:disabled){ border-color:rgba(255,215,140,.95);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 10px 26px rgba(0,0,0,.55),
+              0 0 30px rgba(245,180,70,.5); }
 `}</style>
   );
 }

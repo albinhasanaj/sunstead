@@ -54,6 +54,7 @@ export default function Home() {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   const speakTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showLog, setShowLog] = useState(false);
+  const [showPlayers, setShowPlayers] = useState(false);
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -259,61 +260,112 @@ export default function Home() {
   useEffect(() => () => clearTimeout(speakTimerRef.current ?? undefined), []);
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100 font-mono">
+    <main className="fixed inset-0 bg-black text-neutral-100 font-mono">
       <audio ref={musicRef} hidden />
-      <header className="flex items-center justify-between border-b border-neutral-800 px-5 py-3">
-        <div className="flex items-baseline gap-3">
-          <Link
-            href="/explore"
-            className="text-xs text-neutral-500 transition hover:text-amber-300"
-            title="Back to the catalog"
-          >
-            ← lobby
-          </Link>
-          <Link href="/" className="text-lg font-bold tracking-tight transition hover:text-amber-200">
-            🎭 Agentic Mafia
-          </Link>
-          {phase && (
-            <span className="text-xs text-neutral-400">
-              {phase.phase} · round {phase.round}
-            </span>
-          )}
-          {mode === 'play' && me && (
-            <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase ${ROLE_STYLE[me.role] ?? 'border-neutral-700'}`}>
-              you are {me.role}
-            </span>
-          )}
-          {winner && <span className="text-xs font-bold text-amber-400">🏆 {winner.toUpperCase()} WINS</span>}
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setVoiceOn((v) => !v)}
-            title={voiceOn ? 'Mute voices' : 'Enable voices'}
-            className="rounded border border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-900"
-          >
-            {voiceOn ? '🔊' : '🔇'}
-          </button>
-          <button
-            onClick={() => start('watch')}
-            disabled={running}
-            className="rounded border border-neutral-700 px-3 py-1.5 text-sm font-semibold hover:bg-neutral-900 disabled:opacity-50"
-          >
-            Watch
-          </button>
-          <button
-            onClick={() => start('play')}
-            disabled={running}
-            className="rounded bg-amber-500 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-amber-400 disabled:opacity-50"
-          >
-            {running && mode === 'play' ? 'Playing…' : 'Join game'}
-          </button>
-        </div>
-      </header>
 
-      <div className="grid grid-cols-[260px_1fr] h-[calc(100vh-57px)]">
-        {/* table */}
-        <aside className="overflow-y-auto border-r border-neutral-800 p-3 space-y-2">
-          <h2 className="px-1 text-xs uppercase tracking-wider text-neutral-500">The table</h2>
+      {/* The 3D Tribunal scene fills the whole screen; everything else floats on top. */}
+      <div className="absolute inset-0">
+        <TribunalScene
+          players={players}
+          phase={phase?.phase ?? 'DISCUSSION'}
+          myId={humanId}
+          myRole={myRole}
+          speakingId={speakingId}
+          accusedId={selected && selected !== humanId ? selected : null}
+          turn={turn}
+          onSelect={(id) => setSelected(id || null)}
+          onAction={submitAction}
+        />
+      </div>
+
+      {/* role badge (play mode) — top-left, mirroring the floating controls */}
+      {mode === 'play' && me && (
+        <div className={`absolute left-3 top-3 z-30 rounded-lg border px-2.5 py-1.5 text-[10px] uppercase tracking-wider ${ROLE_STYLE[me.role] ?? 'border-neutral-700'}`}>
+          you are {me.role}
+        </div>
+      )}
+
+      {/* floating controls — top-right cluster, all styled like the Transcript button.
+          Sits above the drawers (z-50) so each button always toggles its panel. */}
+      <div className="absolute right-3 top-3 z-50 flex items-center gap-2">
+        <Link href="/explore" title="Back to the lobby" className={FLOAT_BTN}>
+          ← Lobby
+        </Link>
+        <button onClick={() => setShowPlayers((v) => !v)} title="The table" className={FLOAT_BTN}>
+          👥 Players
+        </button>
+        <button onClick={() => setShowLog((v) => !v)} title="Full transcript" className={FLOAT_BTN}>
+          📜 Transcript
+        </button>
+        <button onClick={() => setVoiceOn((v) => !v)} title={voiceOn ? 'Mute voices' : 'Enable voices'} className={FLOAT_BTN}>
+          {voiceOn ? '🔊' : '🔇'}
+        </button>
+      </div>
+
+      {/* full-screen menu — a dark overlay over the scene; the text and buttons
+          float free (no card). Doubles as the entry and game-over screen. */}
+      {!running && (
+        <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 text-center bg-gradient-to-b from-black/70 via-black/80 to-black/90 backdrop-blur-md">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.45em] text-amber-300/70">The Tribunal</p>
+          <h1 className="mt-3 bg-gradient-to-b from-white to-neutral-400 bg-clip-text text-5xl font-bold tracking-tight text-transparent">
+            Agentic Mafia
+          </h1>
+
+          {winner ? (
+            <p className="mt-5 text-sm font-semibold text-amber-400">{winner.toUpperCase()} prevails — run it back?</p>
+          ) : (
+            <p className="mt-5 max-w-md text-sm leading-relaxed text-neutral-400">
+              A table of AI minds, and one of them is lying.
+              <br />
+              Watch them deliberate — or take a seat and bluff.
+            </p>
+          )}
+
+          <div className="mt-10 flex flex-col items-center gap-3">
+            <button onClick={() => start('play')} className="tribunal-action tribunal-action--join min-w-[240px] text-center">
+              {winner ? 'Play again' : 'Join the table'}
+            </button>
+            <button onClick={() => start('watch')} className="tribunal-action min-w-[240px] text-center">
+              Watch the agents
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* fading lower-third caption: who's speaking, with their face + line */}
+      <div
+        className={`pointer-events-none absolute bottom-4 left-1/2 z-20 w-[min(680px,calc(100%-2rem))] -translate-x-1/2 transition-opacity duration-500 ${
+          captionVisible && captionWho ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        {captionWho && (
+          <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-t from-black/85 via-black/60 to-black/25 px-4 py-3 shadow-lg shadow-black/50 backdrop-blur-md">
+            <PlayerFace name={nameOf(captionWho)} size={46} />
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/90">{nameOf(captionWho)}</div>
+              <div className="line-clamp-2 text-sm leading-snug text-neutral-100">{lastSpeak?.text}</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* free-text action bar (DISCUSSION speech / Mafia whisper), pinned bottom */}
+      {textTurn && (
+        <div className="absolute inset-x-0 bottom-0 z-30">
+          <ActionBar turn={textTurn} onSubmit={submitAction} />
+        </div>
+      )}
+
+      {/* left drawer — the table (toggled by the Players button) */}
+      <div
+        className={`absolute inset-y-0 left-0 z-40 flex w-[300px] max-w-[85%] transform flex-col border-r border-neutral-800 bg-neutral-950/95 backdrop-blur transition-transform duration-300 ${
+          showPlayers ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="border-b border-neutral-800 px-4 py-3">
+          <h3 className="text-xs uppercase tracking-wider text-neutral-400">The table</h3>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {players.length === 0 && <p className="px-1 text-sm text-neutral-600">Watch the agents, or join in.</p>}
           {players.map((p) => (
             <button
@@ -335,80 +387,33 @@ export default function Home() {
               <div className="mt-0.5 truncate text-[10px] text-neutral-500">{p.human ? 'human player' : p.model}</div>
             </button>
           ))}
-        </aside>
+        </div>
+      </div>
 
-        {/* 3D Tribunal scene (the hero) + a compact transcript overlay */}
-        <section className="flex flex-col overflow-hidden bg-black">
-          <div className="relative flex-1 overflow-hidden">
-            <TribunalScene
-              players={players}
-              phase={phase?.phase ?? 'DISCUSSION'}
-              myId={humanId}
-              myRole={myRole}
-              speakingId={speakingId}
-              accusedId={selected && selected !== humanId ? selected : null}
-              turn={turn}
-              onSelect={(id) => setSelected(id || null)}
-              onAction={submitAction}
-            />
-            {players.length === 0 && (
-              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-                <p className="text-sm text-neutral-500">Press “Watch” to convene the tribunal, or “Join game” to take a seat.</p>
-              </div>
-            )}
-            {/* fading lower-third caption: who's speaking, with their face + line */}
-            <div
-              className={`pointer-events-none absolute bottom-4 left-1/2 w-[min(680px,calc(100%-2rem))] -translate-x-1/2 transition-opacity duration-500 ${
-                captionVisible && captionWho ? 'opacity-100' : 'opacity-0'
-              }`}
-            >
-              {captionWho && (
-                <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-gradient-to-t from-black/85 via-black/60 to-black/25 px-4 py-3 shadow-lg shadow-black/50 backdrop-blur-md">
-                  <PlayerFace name={nameOf(captionWho)} size={46} />
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-amber-200/90">{nameOf(captionWho)}</div>
-                    <div className="line-clamp-2 text-sm leading-snug text-neutral-100">{lastSpeak?.text}</div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* toggle for the full transcript drawer */}
-            <button
-              onClick={() => setShowLog((v) => !v)}
-              title="Open the full transcript"
-              className="absolute right-3 top-3 z-30 flex items-center gap-1.5 rounded-lg border border-neutral-700/70 bg-neutral-950/70 px-3 py-1.5 text-xs text-neutral-300 backdrop-blur transition hover:bg-neutral-800/80 hover:text-neutral-100"
-            >
-              📜 Transcript
-            </button>
-
-            {/* slide-out full conversation history */}
-            <div
-              className={`absolute inset-y-0 right-0 z-20 flex w-[340px] max-w-[85%] transform flex-col border-l border-neutral-800 bg-neutral-950/95 backdrop-blur transition-transform duration-300 ${
-                showLog ? 'translate-x-0' : 'translate-x-full'
-              }`}
-            >
-              <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-                <h3 className="text-xs uppercase tracking-wider text-neutral-400">Full transcript</h3>
-                <button onClick={() => setShowLog(false)} className="text-neutral-500 transition hover:text-neutral-200" title="Close">
-                  ✕
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
-                {feed.length === 0 && <p className="text-sm text-neutral-600">Nothing said yet.</p>}
-                {feed.map((it, i) => (
-                  <FeedLine key={i} it={it} nameOf={nameOf} />
-                ))}
-                <div ref={feedEndRef} />
-              </div>
-            </div>
-          </div>
-          {textTurn && <ActionBar turn={textTurn} onSubmit={submitAction} />}
-        </section>
+      {/* right drawer — the full transcript (toggled by the Transcript button) */}
+      <div
+        className={`absolute inset-y-0 right-0 z-40 flex w-[340px] max-w-[85%] transform flex-col border-l border-neutral-800 bg-neutral-950/95 backdrop-blur transition-transform duration-300 ${
+          showLog ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="border-b border-neutral-800 px-4 py-3">
+          <h3 className="text-xs uppercase tracking-wider text-neutral-400">Full transcript</h3>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+          {feed.length === 0 && <p className="text-sm text-neutral-600">Nothing said yet.</p>}
+          {feed.map((it, i) => (
+            <FeedLine key={i} it={it} nameOf={nameOf} />
+          ))}
+          <div ref={feedEndRef} />
+        </div>
       </div>
     </main>
   );
 }
+
+// Shared style for the floating top-right controls (same look as the Transcript button).
+const FLOAT_BTN =
+  'flex items-center gap-1.5 rounded-lg border border-neutral-700/70 bg-neutral-950/70 px-3 py-1.5 text-xs text-neutral-300 backdrop-blur transition hover:bg-neutral-800/80 hover:text-neutral-100';
 
 function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, args: any) => void }) {
   const [text, setText] = useState('');
