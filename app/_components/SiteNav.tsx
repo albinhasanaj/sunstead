@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 const LINKS = [
-  { href: "/explore", label: "Start Playing" },
-  { href: "/onboarding", label: "Log in" },
   { href: "/#what", label: "About" },
+  { href: "/explore", label: "Explore Games" },
+  { href: "/onboarding", label: "Log in" },
 ] as const;
 
 export function SiteNav() {
@@ -58,7 +58,7 @@ export function SiteNav() {
         >
 Adversary        </Link>
 
-        <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex items-center gap-12 sm:gap-8">
           {LINKS.map((l) => (
             <Link
               key={l.label}
