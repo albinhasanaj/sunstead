@@ -16,24 +16,34 @@ import { embed as aiEmbed } from 'ai';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-const MCP_URL = process.env.AIVEN_MCP_URL || 'https://mcp.aiven.live/mcp';
-const PROJECT = process.env.AIVEN_PROJECT || 'albinhasanaj06-1f56';
-const SERVICE = process.env.AIVEN_SERVICE || 'mafia-memory';
-const TOKEN = process.env.AIVEN_TOKEN;
 const EMBED_MODEL = 'openai/text-embedding-3-small';
 const DIM = 1536;
 
+// Read config at CALL time (not import time): scripts load .env.local AFTER their
+// imports run, so capturing process.env at module init would miss the Aiven token.
+function cfg() {
+  return {
+    url: process.env.AIVEN_MCP_URL || 'https://mcp.aiven.live/mcp',
+    project: process.env.AIVEN_PROJECT || 'albinhasanaj06-1f56',
+    service: process.env.AIVEN_SERVICE || 'mafia-memory',
+    token: process.env.AIVEN_TOKEN,
+  };
+}
+
 // Memory is optional: with no Aiven token the game still runs, just memory-less.
-export const memoryEnabled = !!TOKEN;
+export function memoryEnabled(): boolean {
+  return !!process.env.AIVEN_TOKEN;
+}
 
 // ── MCP client (one persistent connection, reused across calls) ────────────────
 let clientPromise: Promise<Client> | null = null;
 function getClient(): Promise<Client> {
   if (!clientPromise) {
     clientPromise = (async () => {
+      const { url, token } = cfg();
       const client = new Client({ name: 'mafia-memory', version: '0.1.0' }, { capabilities: {} });
-      const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
-        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+      const transport = new StreamableHTTPClientTransport(new URL(url), {
+        requestInit: { headers: { Authorization: `Bearer ${token}` } },
       });
       await client.connect(transport);
       return client;
@@ -58,9 +68,10 @@ function unwrap(text: string): string {
 // ── MCP tool wrappers ─────────────────────────────────────────────────────────
 async function pgRead(query: string, reasoning: string): Promise<any[]> {
   const client = await getClient();
+  const { project, service } = cfg();
   const res: any = await client.callTool({
     name: 'aiven_pg_read',
-    arguments: { project: PROJECT, service_name: SERVICE, query, reasoning },
+    arguments: { project, service_name: service, query, reasoning },
   });
   if (res?.isError) throw new Error(`aiven_pg_read: ${rawText(res).slice(0, 300)}`);
   try {
@@ -72,9 +83,10 @@ async function pgRead(query: string, reasoning: string): Promise<any[]> {
 
 async function pgWrite(query: string, reasoning: string): Promise<void> {
   const client = await getClient();
+  const { project, service } = cfg();
   const res: any = await client.callTool({
     name: 'aiven_pg_write',
-    arguments: { project: PROJECT, service_name: SERVICE, query, reasoning },
+    arguments: { project, service_name: service, query, reasoning },
   });
   if (res?.isError) throw new Error(`aiven_pg_write: ${rawText(res).slice(0, 300)}`);
 }
@@ -134,7 +146,7 @@ export interface RememberInput {
 // (not fire-and-forget) so a later turn's recall is guaranteed to see it. Never
 // throws — a memory hiccup must not break the game loop.
 export async function remember(s: RememberInput): Promise<void> {
-  if (!memoryEnabled || !s.gameId || !s.text?.trim()) return;
+  if (!memoryEnabled() || !s.gameId || !s.text?.trim()) return;
   try {
     await ensureSchema();
     const e = await embed(s.text);
@@ -165,7 +177,7 @@ export async function recall(opts: {
   k?: number;
   excludeSpeaker?: string;
 }): Promise<Recalled[]> {
-  if (!memoryEnabled || !opts.gameId || !opts.queryText?.trim()) return [];
+  if (!memoryEnabled() || !opts.gameId || !opts.queryText?.trim()) return [];
   const k = Math.max(1, Math.min(opts.k ?? 5, 10)); // small k → lean latency
   try {
     await ensureSchema();
