@@ -11,8 +11,8 @@ const nameOf = (s: GameState, id: PlayerId) => s.players.find((p) => p.id === id
 // N is small enough that a prior round's claims fall outside a normal game's
 // window; 0 or negative disables the cap. Override with MAFIA_CONTEXT_WINDOW.
 export function contextWindow(): number {
-  const n = Number(process.env.MAFIA_CONTEXT_WINDOW ?? 10);
-  return Number.isFinite(n) ? n : 10;
+  const n = Number(process.env.MAFIA_CONTEXT_WINDOW ?? 15);
+  return Number.isFinite(n) ? n : 15;
 }
 
 // The slice of the public log the agent is allowed to SEE this turn (the rest has

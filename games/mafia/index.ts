@@ -113,9 +113,11 @@ export const mafiaGame: GameDefinition = {
   // Reactive discussion (Phase 1 concurrency); set MAFIA_DISCUSSION=classic to
   // fall back to fixed seat order.
   ...(process.env.MAFIA_DISCUSSION !== 'classic' ? { beatPhases: [PHASE.DISCUSSION], nextSpeaker } : {}),
-  // Phase 2 concurrency: secret votes are independent, so cast them all at once.
-  // Set MAFIA_PARALLEL=0 to fall back to sequential voting.
-  ...(process.env.MAFIA_PARALLEL !== '0' ? { parallelPhases: [PHASE.VOTE] } : {}),
+  // Concurrency: NIGHT actions and secret VOTEs are all independent, so every
+  // actor decides at once — the phase resolves the moment everyone (incl. you)
+  // has acted, instead of waiting through sequential turns. Set MAFIA_PARALLEL=0
+  // to fall back to sequential.
+  ...(process.env.MAFIA_PARALLEL !== '0' ? { parallelPhases: [PHASE.NIGHT, PHASE.VOTE] } : {}),
   // Per-seat models come from each personality; this is only the fallback for a
   // seat with no model of its own. A game-wide override is still possible via env.
   model: process.env.MAFIA_MODEL || FALLBACK_MODEL,

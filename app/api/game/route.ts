@@ -19,6 +19,15 @@ export async function POST(req: Request) {
   const mode: 'watch' | 'play' = body?.mode === 'play' ? 'play' : 'watch';
   const turnDelayMs = Number(process.env.MAFIA_TURN_DELAY_MS ?? body?.turnDelayMs ?? 0);
 
+  // Dev-only: let the local tester force the human's role for testing. Ignored in
+  // production and for non-roles. Applied at setup by swapping seats so the role
+  // distribution (and win-condition balance) stays intact.
+  const DEV_ROLES = ['mafia', 'detective', 'doctor', 'villager'];
+  const devRole =
+    process.env.NODE_ENV !== 'production' && mode === 'play' && typeof body?.devRole === 'string' && DEV_ROLES.includes(body.devRole)
+      ? (body.devRole as string)
+      : null;
+
   // Roster. In play mode we seat the human alongside four AI players.
   let names: string[] = Array.isArray(body?.names) && body.names.length ? body.names : [];
   if (mode === 'play') {
@@ -81,6 +90,14 @@ export async function POST(req: Request) {
             if (mode === 'play') {
               const h = state.players.find((p) => p.name === HUMAN_NAME);
               if (h) {
+                // Dev override: force the human's role by swapping with a player who
+                // already holds it (keeps the exact role counts); if none has it,
+                // force it directly.
+                if (devRole && h.role !== devRole) {
+                  const other = state.players.find((p) => p.id !== h.id && p.role === devRole);
+                  if (other) other.role = h.role;
+                  h.role = devRole;
+                }
                 h.private.human = true;
                 humanId = h.id;
                 humanIsMafia = h.role === 'mafia';
