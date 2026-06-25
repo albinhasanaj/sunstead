@@ -29,6 +29,10 @@ type Feed =
   | { k: 'win'; winner: string }
   | { k: 'error'; text: string };
 
+// Generous per-phase countdowns (seconds). The timer is a safety net + a skip
+// target, never a rush — it's long enough to always finish your move.
+const PHASE_SECS: Record<string, number> = { NIGHT: 90, DISCUSSION: 240, VOTE: 60 };
+
 const ROLE_STYLE: Record<string, string> = {
   mafia: 'bg-red-500/15 text-red-300 border-red-500/30',
   villager: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
@@ -66,6 +70,9 @@ export default function Home() {
   // Big transient death/elimination announcement banner.
   const [announce, setAnnounce] = useState<{ name: string; sub: string } | null>(null);
   const announceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Phase countdown + the "ready to move to vote" toggle.
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [wantsSkip, setWantsSkip] = useState(false);
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -217,6 +224,8 @@ export default function Home() {
       setProtectedId(null);
       setKillVotesByAgent({});
       setAnnounce(null);
+      setSecondsLeft(null);
+      setWantsSkip(false);
       announcedTeamRef.current = false;
       setMode(m);
       setRunning(true);
@@ -287,6 +296,36 @@ export default function Home() {
     [gameId, nameOf, humanId],
   );
 
+  // Pass / skip the current turn (the engine treats a null choice as no action).
+  const skipTurn = useCallback(async () => {
+    setTurn(null);
+    try {
+      await fetch('/api/game/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, skip: true }),
+      });
+    } catch {
+      /* ignore */
+    }
+  }, [gameId]);
+
+  // Ask to move to the vote. Only fast-forwards if a majority of the table agrees.
+  const requestSkipDiscussion = useCallback(
+    async (value: boolean) => {
+      try {
+        await fetch('/api/game/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ gameId, control: 'skipDiscussion', value }),
+        });
+      } catch {
+        /* ignore */
+      }
+    },
+    [gameId],
+  );
+
   const myTurn = turn && humanId && turn.agent === humanId ? turn : null;
   const me = humanId ? players.find((p) => p.id === humanId) : null;
   const myRole = me?.role ?? 'unknown';
@@ -325,6 +364,52 @@ export default function Home() {
   }, [feed]);
   const captionVisible = !!speakingId;
   const captionWho = speakingId ?? lastSpeak?.who ?? null;
+
+  // ── phase timers (generous; the timer never rushes you) ─────────────────────
+  // On your turn it auto-passes if you idle past the clock; during discussion an
+  // expired clock raises the "ready to vote" flag (still needs a table majority).
+  const phaseSecs = phase ? (PHASE_SECS[phase.phase] ?? 90) : null;
+  const deadlineRef = useRef<number | null>(null);
+  const expiredRef = useRef(false);
+  // live values for the interval callback (avoids stale closures)
+  const timerLive = useRef({ play: false, myTurn: false, phase: '', skipTurn, requestSkipDiscussion });
+  timerLive.current = { play: mode === 'play', myTurn: !!myTurn, phase: phase?.phase ?? '', skipTurn, requestSkipDiscussion };
+
+  // (re)start the clock on each phase change and whenever it becomes your turn,
+  // so you always get the full, generous duration to act.
+  useEffect(() => {
+    if (!running || phaseSecs == null) {
+      deadlineRef.current = null;
+      setSecondsLeft(null);
+      return;
+    }
+    deadlineRef.current = Date.now() + phaseSecs * 1000;
+    expiredRef.current = false;
+    setSecondsLeft(phaseSecs);
+    setWantsSkip(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase?.phase, phase?.round, running, turn]);
+
+  // tick + handle expiry
+  useEffect(() => {
+    if (!running) return;
+    const iv = setInterval(() => {
+      if (deadlineRef.current == null) return;
+      const left = Math.max(0, Math.ceil((deadlineRef.current - Date.now()) / 1000));
+      setSecondsLeft(left);
+      if (left <= 0 && !expiredRef.current) {
+        expiredRef.current = true;
+        const l = timerLive.current;
+        if (!l.play) return; // watch mode: the timer is purely visual
+        if (l.myTurn) l.skipTurn();
+        else if (l.phase === 'DISCUSSION') {
+          setWantsSkip(true);
+          l.requestSkipDiscussion(true);
+        }
+      }
+    }, 250);
+    return () => clearInterval(iv);
+  }, [running]);
 
   useEffect(
     () => () => {
@@ -380,6 +465,39 @@ export default function Home() {
           {voiceOn ? '🔊' : '🔇'}
         </button>
       </div>
+
+      {/* phase countdown — generous; just a pacing indicator + skip target */}
+      {running && !winner && secondsLeft != null && (
+        <div className="absolute left-1/2 top-10 z-30 -translate-x-1/2 rounded-full border border-neutral-700/60 bg-neutral-950/70 px-3 py-1 text-xs tabular-nums tracking-wider text-neutral-300 backdrop-blur">
+          <span className={secondsLeft <= 10 ? 'text-amber-300' : ''}>
+            ⏱ {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
+          </span>
+        </div>
+      )}
+
+      {/* bottom-right turn controls: pass your turn / call a vote (consensus) */}
+      {running && !winner && mode === 'play' && !!me?.alive && (
+        <div className={`absolute right-3 z-40 flex flex-col items-end gap-2 transition-all duration-300 ${showBar ? 'bottom-24' : 'bottom-4'}`}>
+          {myTurn && (
+            <button onClick={skipTurn} title="Pass — take no action this turn" className={FLOAT_BTN}>
+              ⏭ Skip my turn
+            </button>
+          )}
+          {inDiscussion && (
+            <button
+              onClick={() => {
+                const next = !wantsSkip;
+                setWantsSkip(next);
+                requestSkipDiscussion(next);
+              }}
+              title="Call to end discussion early — only fast-forwards if the table agrees"
+              className={`${FLOAT_BTN} ${wantsSkip ? '!border-amber-400/70 !bg-amber-500/15 !text-amber-200' : ''}`}
+            >
+              {wantsSkip ? '✓ Waiting for the table…' : '⏭ Move to vote'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* full-screen menu — a dark overlay over the scene; the text and buttons
           float free (no card). Doubles as the entry and game-over screen. */}
