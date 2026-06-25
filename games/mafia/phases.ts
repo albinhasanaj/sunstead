@@ -114,29 +114,42 @@ function resolveNight(state: GameState, emit: Emit): void {
   const proposals: Record<PlayerId, PlayerId> = state.meta.killProposals ?? {};
   const target = majority(Object.values(proposals));
   const protectedId: PlayerId | null = state.meta.protect ?? null;
+  const victim = target ? state.players.find((p) => p.id === target) : undefined;
 
-  if (target && target !== protectedId) {
-    const victim = state.players.find((p) => p.id === target);
-    if (victim && victim.alive) {
-      victim.alive = false;
-      emit({ type: 'death', target: victim.id, role: victim.role });
-      void publish(TOPIC_TABLE, {
-        kind: 'death', gameId: state.meta.gameId as string, round: state.round,
-        target: victim.name, role: victim.role, // structured (analytics) only — never shown to agents
-        text: `${victim.name} was found dead.`,
-      });
-      // Hidden-role variant: the death does NOT reveal what they were. Only the
-      // player themselves (and Mafia teammates) ever know a role.
-      state.publicLog.push({
-        speaker: 'system',
-        text: `Dawn breaks. ${victim.name} was found dead.`,
-      });
-      return;
-    }
+  // Doctor save: the Mafia DID lock a target, but it was the protected player.
+  // Announced anonymously — no one learns who was targeted or who shielded them.
+  if (target && victim && victim.alive && target === protectedId) {
+    emit({ type: 'night', outcome: 'saved' });
+    state.publicLog.push({
+      speaker: 'system',
+      text: 'Dawn breaks. The Mafia struck in the night — but the doctor shielded their target. No one died.',
+    });
+    return;
   }
+
+  // A kill landed.
+  if (target && victim && victim.alive) {
+    victim.alive = false;
+    emit({ type: 'death', target: victim.id, role: victim.role });
+    void publish(TOPIC_TABLE, {
+      kind: 'death', gameId: state.meta.gameId as string, round: state.round,
+      target: victim.name, role: victim.role, // structured (analytics) only — never shown to agents
+      text: `${victim.name} was found dead.`,
+    });
+    // Hidden-role variant: the death does NOT reveal what they were. Only the
+    // player themselves (and Mafia teammates) ever know a role.
+    state.publicLog.push({
+      speaker: 'system',
+      text: `Dawn breaks. ${victim.name} was found dead.`,
+    });
+    return;
+  }
+
+  // No kill was locked in at all (Mafia never settled on a target).
+  emit({ type: 'night', outcome: 'quiet' });
   state.publicLog.push({
     speaker: 'system',
-    text: 'Dawn breaks. Miraculously, no one died last night.',
+    text: 'Dawn breaks. The night passed quietly — no one died.',
   });
 }
 

@@ -86,4 +86,8 @@ export type GameEvent =
   | { type: 'death'; target: PlayerId; role: string }
   | { type: 'vote'; agent: PlayerId; target: PlayerId }
   | { type: 'reveal'; target: PlayerId; role: string }
+  // Anonymous night outcome when no one dies: 'saved' = the Mafia's target was
+  // protected by the doctor; 'quiet' = no kill landed. Carries no ids — no one
+  // learns who was targeted or who saved them.
+  | { type: 'night'; outcome: 'saved' | 'quiet' }
   | { type: 'win'; winner: string };
