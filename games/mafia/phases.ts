@@ -1,6 +1,12 @@
 import type { AgentState, Emit, GameState, PlayerId } from '../../engine/types';
 import { ROLE, isMafia } from './roles';
 import { busEnabled, drain, publish, TOPIC_TABLE, TOPIC_VOTES } from '../../lib/bus';
+import { pollLiveUrge } from './liveUrge';
+
+// Paid-tier live hand-raise (each seat rates its own urge via its own model) vs the
+// default free-tier pure-code auction. Plus an opt-in score breakdown for debugging.
+const LIVE_URGE = process.env.MAFIA_LIVE_URGE === '1';
+const DEBUG_URGE = !!process.env.MAFIA_DEBUG_URGE;
 
 export const PHASE = {
   NIGHT: 'NIGHT',
@@ -12,11 +18,19 @@ export const PHASES = [PHASE.NIGHT, PHASE.DISCUSSION, PHASE.VOTE];
 
 const DISCUSSION_ROUNDS = 2;
 
-// Phase 1 concurrency: instead of a fixed seat order, pick the next discussion
-// speaker per beat from a cheap heuristic "eagerness" — so whoever was just
-// accused/named jumps in to respond, quieter players get pulled in, and nobody
-// speaks twice in a row. No extra LLM calls: only the chosen speaker generates.
-export function nextSpeaker(state: GameState): PlayerId | null {
+// Reactive discussion: instead of a fixed seat order, each beat picks the speaker who
+// most wants the floor — an "urge to speak" auction (urge() below). Whoever was just
+// named jumps in to reply, a quieter seat with a live-triggered thought breaks into a
+// two-person duel, and nobody speaks twice in a row. On the free tier this costs ZERO
+// extra LLM calls: the urge is assembled from signals each seat already produced in
+// its own update_beliefs (its on-deck "bid") plus the live transcript. The optional
+// paid path (MAFIA_LIVE_URGE=1) first polls each silent seat's own model for a 1-token
+// hand-raise, then scores — see ./liveUrge.
+type LogLine = { speaker: PlayerId; text: string };
+// Per-discussion scratch held on state.meta.disc (untyped Record there; typed here).
+type Disc = { round: number; beat: number; budget: number; spoke: Record<PlayerId, number>; last: PlayerId | null };
+
+export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerId | null> {
   if (state.phase !== PHASE.DISCUSSION) return null;
   const living = alive(state);
   const meta = state.meta; // Record<string, any> — per-discussion scratch lives here
@@ -38,63 +52,173 @@ export function nextSpeaker(state: GameState): PlayerId | null {
 
   if (d.beat >= d.budget) return null;
 
-  const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2);
+  const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2) as LogLine[];
+  const candidates = living.filter((p) => p.id !== d.last); // never speak twice in a row
 
-  let bestId: PlayerId | null = null;
-  let bestScore = -Infinity;
-  for (const p of living) {
-    if (p.id === d.last) continue; // never speak twice in a row
-    let s = eagerness(p, recent, d.spoke);
-    if (p.private.human) s += 0.5; // make sure a human is regularly offered the floor
-    if (s > bestScore) { bestScore = s; bestId = p.id; }
-  }
-  if (bestId) {
-    d.beat += 1;
-    d.spoke[bestId] = (d.spoke[bestId] ?? 0) + 1;
-    d.last = bestId;
-  }
-  return bestId;
-}
+  // Score every candidate, take the keenest, and COMMIT the pick (spend a beat of the
+  // round's speaking budget). Shared by the sync free path and the async live path.
+  const pick = (): PlayerId | null => {
+    let bestId: PlayerId | null = null;
+    let bestScore = -Infinity;
+    for (const p of candidates) {
+      let s = urge(state, p, recent, d);
+      if (p.private.human) s += 0.5; // keep offering a human the floor regularly
+      if (DEBUG_URGE) console.log(`[urge] r${state.round} b${d.beat} ${p.name.padEnd(9)} ${s.toFixed(3)}`);
+      if (s > bestScore) { bestScore = s; bestId = p.id; }
+    }
+    if (bestId) {
+      d.beat += 1;
+      d.spoke[bestId] = (d.spoke[bestId] ?? 0) + 1;
+      d.last = bestId;
+      if (DEBUG_URGE) console.log(`[urge] → floor: ${nameOf(state, bestId)} (${bestScore.toFixed(3)})`);
+    }
+    return bestId;
+  };
 
-// A living player's base "urge to speak" right now: a little jitter, a pull toward
-// seats who've been quiet, and a strong bump if they were just named in the last
-// couple of lines (they'll want to reply). Shared by nextSpeaker (whose turn is it)
-// and mostEagerSpeaker (which AI fills a human's silence). No human bump here —
-// callers add that themselves only where offering the human the floor makes sense.
-function eagerness(p: AgentState, recent: { speaker: PlayerId; text: string }[], spoke: Record<PlayerId, number>): number {
-  let s = 0.1 + Math.random() * 0.15;
-  s += 0.25 * Math.max(0, 2 - (spoke[p.id] ?? 0)); // pull in quieter players
-  if (recent.some((l) => l.speaker !== p.id && l.text.toLowerCase().includes(p.name.toLowerCase()))) s += 0.6;
-  return s;
+  if (LIVE_URGE) return pollLiveUrge(state, candidates.filter((p) => !p.private.human)).then(pick);
+  return pick();
 }
 
 // Idle "speaking pressure": when the human holds the DISCUSSION floor but has gone
-// quiet, this picks the AI most eager to break the silence so the table never
-// freezes. Excludes the human, the seat that just spoke, and any ids passed in;
-// never picks a non-AI. It commits the pick to the per-discussion state (so the
-// speaker counts as having talked and won't immediately repeat) but does NOT spend
-// the round's speaking budget — these are bonus lines filling idle time, not beats.
-// Returns null if no AI is available to step in.
-export function mostEagerSpeaker(state: GameState, excludeIds: PlayerId[] = []): PlayerId | null {
+// quiet, this picks the AI most eager to break the silence so the table never freezes.
+// Excludes the human, the seat that just spoke, and any ids passed in; never picks a
+// non-AI. It commits the pick (so the speaker won't immediately repeat) but does NOT
+// spend the round's speaking budget — these are bonus lines filling idle time, not
+// beats. Returns null if no AI is available to step in.
+export function mostEagerSpeaker(state: GameState, excludeIds: PlayerId[] = []): PlayerId | null | Promise<PlayerId | null> {
   if (state.phase !== PHASE.DISCUSSION) return null;
   const d = state.meta.disc; // per-discussion state seeded by nextSpeaker
   if (!d) return null;
-  const spoke: Record<PlayerId, number> = d.spoke ?? {};
-  const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2);
+  const recent = state.publicLog.filter((l) => l.speaker !== 'system').slice(-2) as LogLine[];
   const exclude = new Set<PlayerId>([...excludeIds, ...(d.last ? [d.last as PlayerId] : [])]);
+  const candidates = alive(state).filter((p) => !p.private.human && !exclude.has(p.id));
 
-  let bestId: PlayerId | null = null;
-  let bestScore = -Infinity;
-  for (const p of alive(state)) {
-    if (p.private.human || exclude.has(p.id)) continue; // AIs only; never repeat the last speaker
-    const s = eagerness(p, recent, spoke);
-    if (s > bestScore) { bestScore = s; bestId = p.id; }
+  const pick = (): PlayerId | null => {
+    let bestId: PlayerId | null = null;
+    let bestScore = -Infinity;
+    for (const p of candidates) {
+      const s = urge(state, p, recent, d);
+      if (s > bestScore) { bestScore = s; bestId = p.id; }
+    }
+    if (bestId) {
+      d.spoke[bestId] = (d.spoke[bestId] ?? 0) + 1;
+      d.last = bestId;
+    }
+    return bestId;
+  };
+
+  if (LIVE_URGE) return pollLiveUrge(state, candidates).then(pick);
+  return pick();
+}
+
+// ── the "urge to speak" auction ────────────────────────────────────────────────
+// A pure read of how much one living seat wants the floor this beat. All scheduler
+// mutation (beat/spoke/last) stays in the callers. The legacy heuristic (jitter +
+// quiet-pull + named-bonus) is preserved verbatim as the spine, and every new content
+// signal defaults to zero, so with no bids the auction degrades to the old behaviour.
+function urge(state: GameState, p: AgentState, recent: LogLine[], d: Disc): number {
+  const others = recent.filter((l) => l.speaker !== p.id); // ignore my own last line
+  const beat = d.beat;
+
+  // 1) LEGACY SPINE — unchanged.
+  let s = 0.1 + Math.random() * 0.15;
+  s += 0.25 * Math.max(0, 2 - (d.spoke[p.id] ?? 0)); // pull in quieter seats
+  if (others.some((l) => l.text.toLowerCase().includes(p.name.toLowerCase()))) s += 0.6; // I was named
+
+  const bid = p.private.bid as { pressure?: number; triggers?: string[]; round?: number; beat?: number } | undefined;
+  const hay = others.map((l) => l.text.toLowerCase()).join('  ¶  ');
+
+  // 2) TRIGGER-HIT — a self-authored trigger matches the live last lines (content-
+  //    driven entry, even when I wasn't named). Substring = strong; token-overlap = fuzzy.
+  if (bid?.triggers?.length && hay) {
+    let best = 0;
+    for (const raw of bid.triggers) {
+      const t = String(raw).trim().toLowerCase();
+      if (!t) continue;
+      if (t.length >= 3 && hay.includes(t)) { best = 1; break; }
+      const tt = tokenize(t);
+      if (tt.length) {
+        const ht = new Set(tokenize(hay));
+        best = Math.max(best, tt.filter((w) => ht.has(w)).length / tt.length);
+      }
+    }
+    s += 0.7 * best;
   }
-  if (bestId) {
-    d.spoke[bestId] = (d.spoke[bestId] ?? 0) + 1;
-    d.last = bestId;
+
+  // 3) STAKE — how suspicious I am of whoever just spoke (I want to push back).
+  const lastOther = others[others.length - 1];
+  if (lastOther) s += 0.45 * (p.private.suspicions?.[lastOther.speaker] ?? 0);
+
+  // 4) PRESSURE — my self-rated 0-10 urge (or the live hand-raise), decayed by beats
+  //    since I posted it; a stale-round bid is heavily discounted so it can't hog the floor.
+  const live = p.private.liveUrge as { value?: number; round?: number; beat?: number } | undefined;
+  let pressure = 0;
+  if (live && live.round === state.round) {
+    pressure = live.value ?? 0; // a fresh live hand-raise overrides the predicted bid
+  } else if (bid && typeof bid.pressure === 'number') {
+    const age = bid.round === state.round ? Math.max(0, beat - (bid.beat ?? beat)) : beat + 2;
+    pressure = bid.pressure * Math.pow(0.5, age);
   }
-  return bestId;
+  s += 0.06 * Math.max(0, Math.min(10, pressure));
+
+  // 5) ANTI-MONOPOLY — when a tight pair owns the recent floor, lift the outsiders so
+  //    a third voice can break into the duel.
+  s += antiMonopolyBoost(state, p.id);
+
+  // 6) PERSONA — loud seats volunteer; quiet, calculating seats hold back.
+  s += personaBias(p);
+
+  // 7) a little extra noise so it never feels mechanical.
+  s += Math.random() * 0.1;
+  return s;
+}
+
+const URGE_STOP = new Set(['the', 'and', 'you', 'are', 'that', 'this', 'was', 'for', 'with', 'but', 'they', 'not', 'who', 'your', 'out', 'has', 'its', 'what', 'why', 'how', 'is', 'it', 'to', 'of', 'im', 'dont', 'about', 'just', 'think']);
+function tokenize(x: string): string[] {
+  return (x.toLowerCase().match(/[a-z0-9']+/g) ?? []).filter((w) => w.length > 2 && !URGE_STOP.has(w));
+}
+
+const MONO_WINDOW = 4; // last N non-system lines examined for a floor monopoly
+function antiMonopolyBoost(state: GameState, candidateId: PlayerId): number {
+  const lines = state.publicLog.filter((l) => l.speaker !== 'system').slice(-MONO_WINDOW);
+  if (lines.length < MONO_WINDOW) return 0; // not enough talk yet to have a monopoly
+  const counts: Record<PlayerId, number> = {};
+  for (const l of lines) counts[l.speaker] = (counts[l.speaker] ?? 0) + 1;
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const topTwoShare = sorted.slice(0, 2).reduce((n, [, c]) => n + c, 0) / lines.length;
+  const dominated = sorted.length <= 2 || topTwoShare >= 0.75; // a tight pair owns the floor
+  if (!dominated) return 0;
+  const dominators = new Set(sorted.slice(0, 2).map(([id]) => id));
+  return dominators.has(candidateId) ? 0 : 0.5; // boost only the OUTSIDERS
+}
+
+// Loud ↔ quiet baseline. Known seats get a hand-tuned delta (justified by their trait);
+// an unknown/custom seat derives one from trait keywords. Cached on the seat so we
+// don't re-parse the trait string every beat.
+const PERSONA_BIAS: Record<string, number> = {
+  Grok: 0.2, // roasts everyone — always has a quip
+  Gemini: 0.15, // know-it-all who dazzles — volunteers facts
+  Llama: 0.1, // open-book, shares freely
+  GPT: 0.05, // agreeable diplomat — engages, but hedged
+  Qwen: 0.0, // chameleon — reactive, neutral baseline
+  Claude: -0.05, // weighs every side — deliberate, slightly held back
+  Mistral: -0.1, // says little, wastes no words
+  DeepSeek: -0.15, // quiet, reveals nothing early — most reserved
+};
+const PERSONA_LOUD = ['roast', 'snark', 'dazzle', 'confident', 'know-it-all', 'shares freely', 'open-book', 'loud', 'blunt', 'irreverent', 'jokester', 'assertive'];
+const PERSONA_QUIET = ['quiet', 'calculating', 'reveals nothing', 'minimalist', 'says little', 'reserved', 'careful', 'deliberate', 'weighs', 'principled', 'cautious'];
+function personaBias(p: AgentState): number {
+  if (typeof p.private._persona === 'number') return p.private._persona;
+  let delta = PERSONA_BIAS[p.name];
+  if (delta === undefined) {
+    const t = String(p.private.trait ?? '').toLowerCase();
+    delta = 0;
+    for (const k of PERSONA_LOUD) if (t.includes(k)) delta += 0.05;
+    for (const k of PERSONA_QUIET) if (t.includes(k)) delta -= 0.05;
+    delta = Math.max(-0.15, Math.min(0.2, delta));
+  }
+  p.private._persona = delta;
+  return delta;
 }
 
 const alive = (s: GameState) => s.players.filter((p) => p.alive);

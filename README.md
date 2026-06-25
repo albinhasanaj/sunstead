@@ -53,11 +53,29 @@ rate-limit hard, so a full game can stall. Knobs:
 - `MAFIA_TURN_DELAY_MS=3500` — space turns to respect per-minute limits.
 - `GameDefinition.fallbackModel` retries a failed turn once on a backup model.
 
+Discussion isn't round-robin: each beat an **"urge to speak" auction** picks who
+talks. A seat's urge is assembled — with **zero extra LLM calls** — from signals it
+already produced in its own `update_beliefs` ("on-deck bid": `pressure`, `holding`,
+`triggers`) plus the live transcript: a seat whose self-authored trigger matches the
+last line jumps in *even unnamed*, a quieter seat breaks into a two-person duel
+(anti-monopoly), and loud/quiet personalities fall out of each seat's trait. See
+`urge()` in `games/mafia/phases.ts`; regression-tested token-free by
+`pnpm tsx scripts/probe-scheduler.ts`.
+
+- `MAFIA_DEBUG_URGE=1` — log every seat's score + the chosen floor, each beat.
+- `MAFIA_LIVE_URGE=1` — **paid tier**: instead of predicting urge, poll each silent
+  seat's *own* model for a genuine 1-token "hand-raise" before picking (one request
+  per silent seat per beat — too many for the free tier's rate limits).
+
 In **play** mode, when you hold the discussion floor but stay quiet, the most
-eager AI jumps in so the table never goes dead — "speaking pressure":
+eager AI jumps in so the table never goes dead — the same auction, on a timer:
 
 - `MAFIA_IDLE_MS=18000` — how long your silence lasts before an AI fills it.
 - `MAFIA_IDLE_MAX=3` — fill-ins before your turn auto-passes (you can speak any time).
+
+Prompt caching is on (`caching: 'auto'`, AI Gateway v4 — needs `ai@7`): the stable
+system + transcript prefix is cached, cheaper + faster. Measured on the free tier it
+engages for OpenAI and Google (cache reads), but **not** Anthropic.
 
 Verified clean full game:
 `MAFIA_MODEL=anthropic/claude-haiku-4.5 MAFIA_TURN_DELAY_MS=3500 pnpm play`.

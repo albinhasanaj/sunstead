@@ -52,7 +52,9 @@ export interface GameDefinition {
   // precomputed turnOrder. For such phases the engine repeatedly calls nextSpeaker
   // until it returns null.
   beatPhases?: string[];
-  nextSpeaker?: (state: GameState) => PlayerId | null;
+  // May be async: an optional paid "live urge" path polls each seat's own model
+  // before picking. The free-tier path stays synchronous; the engine awaits either.
+  nextSpeaker?: (state: GameState) => PlayerId | null | Promise<PlayerId | null>;
   // Phases whose turns are independent (e.g. secret simultaneous voting) and may
   // run concurrently instead of one at a time.
   parallelPhases?: string[];
@@ -80,7 +82,15 @@ export interface GameDefinition {
 export type GameEvent =
   | { type: 'setup'; players: { id: PlayerId; name: string; role: string; model?: string }[]; phase: string; round: number }
   | { type: 'phase'; phase: string; round: number }
-  | { type: 'beliefs'; agent: PlayerId; suspicions: Record<PlayerId, number>; reasoning: string }
+  | {
+      type: 'beliefs';
+      agent: PlayerId;
+      suspicions: Record<PlayerId, number>;
+      reasoning: string;
+      // On-deck "bid": how much this seat wants the floor + what it's holding. Only
+      // ever reaches the client in watch mode (play mode drops 'beliefs' entirely).
+      bid?: { pressure: number; holding: string; triggers: string[]; round: number; beat: number };
+    }
   | { type: 'thinking'; agent: PlayerId; on: boolean } // seat is mid-deliberation — for a "thinking…" UI and to visualise concurrent thinking
   | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string }
   | { type: 'whisper'; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)

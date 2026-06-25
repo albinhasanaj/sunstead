@@ -132,7 +132,7 @@ export async function POST(req: Request) {
           if (winner !== IDLE) return humanChoice; // the human acted (or the game ended)
           if (session.closed || !session.pending) return humanChoice;
 
-          const speakerId = mostEagerSpeaker(state, [human.id]);
+          const speakerId = await mostEagerSpeaker(state, [human.id]);
           const speaker = speakerId ? state.players.find((p) => p.id === speakerId) : undefined;
           if (!speaker || !speaker.alive) break; // no AI free to step in
           console.log(`[idle] ${human.name} quiet ${IDLE_MS}ms — ${speaker.name} fills the silence (${fills + 1}/${IDLE_MAX})`);

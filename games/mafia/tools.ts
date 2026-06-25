@@ -47,6 +47,22 @@ const updateBeliefs: GameTool = {
         }),
       )
       .describe('Your suspicion of each living player.'),
+    // On-deck "bid": how much you want the floor right now and what you're holding.
+    // This is how you JUMP IN during discussion — even unprompted. It rides this same
+    // call, so it costs nothing extra. Optional: omit it and you simply bid nothing.
+    pressure: z
+      .number()
+      .int()
+      .min(0)
+      .max(10)
+      .optional()
+      .describe('0-10: how badly you want to speak RIGHT NOW (9 = you must jump in; 0 = nothing to add).'),
+    holding: z.string().max(160).optional().describe('One line you are sitting on, ready to say the moment it becomes relevant.'),
+    triggers: z
+      .array(z.string().max(40))
+      .max(5)
+      .optional()
+      .describe('Topics, player names, or claim-types that would pull you in to speak (e.g. "doctor claim", "Gemini", "vote on me").'),
   }),
   legalIn: () => true,
   execute: async (args, ctx: ToolContext) => {
@@ -57,7 +73,19 @@ const updateBeliefs: GameTool = {
     }
     ctx.agent.private.suspicions = map;
     ctx.agent.private.notes = args.reasoning;
-    ctx.emit({ type: 'beliefs', agent: ctx.agent.id, suspicions: map, reasoning: args.reasoning });
+    // Stash the sanitized on-deck bid, stamped with round + beat so the scheduler can
+    // decay a stale urge. Caps guard against a verbose/adversarial model bloating it.
+    const bid = {
+      pressure: typeof args.pressure === 'number' ? Math.max(0, Math.min(10, Math.round(args.pressure))) : 0,
+      holding: String(args.holding ?? '').slice(0, 160),
+      triggers: (Array.isArray(args.triggers) ? args.triggers : []).slice(0, 5).map((t: unknown) => String(t).toLowerCase().slice(0, 40)),
+      round: ctx.state.round,
+      beat: (ctx.state.meta.disc?.beat as number | undefined) ?? 0,
+    };
+    ctx.agent.private.bid = bid;
+    // The bid rides the beliefs event (watch-mode only — play mode drops 'beliefs'
+    // wholesale, so a human never sees AI pressure/holding/triggers).
+    ctx.emit({ type: 'beliefs', agent: ctx.agent.id, suspicions: map, reasoning: args.reasoning, bid });
     return 'Beliefs recorded privately. Now take exactly ONE public/game action for this turn.';
   },
 };

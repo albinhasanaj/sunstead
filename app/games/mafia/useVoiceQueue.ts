@@ -10,9 +10,10 @@ export type VoiceItem = { id: string; name: string; text: string };
 // speaker + captions to the ACTUAL audio instead of racing ahead of it — the whole
 // point of a voice-first table. Lives entirely on the client.
 export type VoiceListeners = {
-  onStart?: (item: VoiceItem) => void; // a line just began (caption + speaking head)
+  onStart?: (item: VoiceItem) => void; // a line just began (caption + speaking head + reveal in transcript)
   onEnd?: (item: VoiceItem) => void; // that line finished playing
   onIdle?: (idle: boolean) => void; // true when nothing is queued/playing
+  onFlush?: (items: VoiceItem[]) => void; // queued-but-unvoiced lines being dropped (mute/reset) — so the transcript can still keep them
 };
 
 // A silent or failed line still holds the floor briefly so the table never
@@ -93,6 +94,7 @@ export function useVoiceQueue() {
     (on: boolean) => {
       enabled.current = on;
       if (!on) {
+        if (queue.current.length) listeners.current.onFlush?.(queue.current.slice()); // don't lose un-voiced lines from the transcript
         queue.current = [];
         audioRef.current?.pause();
         finishRef.current?.(); // unblock any in-flight line so the pump can drain
@@ -103,6 +105,7 @@ export function useVoiceQueue() {
   );
 
   const reset = useCallback(() => {
+    if (queue.current.length) listeners.current.onFlush?.(queue.current.slice()); // keep un-voiced lines in the transcript
     queue.current = [];
     audioRef.current?.pause();
     finishRef.current?.();

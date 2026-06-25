@@ -56,7 +56,8 @@ export async function runGame(
     // based on who's most motivated, so the table feels alive instead of round-robin.
     if (def.beatPhases?.includes(state.phase) && def.nextSpeaker) {
       let id: string | null;
-      while ((id = def.nextSpeaker(state)) !== null) {
+      // nextSpeaker may be async (the optional paid "live urge" path); await covers both.
+      while ((id = await def.nextSpeaker(state)) !== null) {
         const agent = state.players.find((p) => p.id === id);
         if (agent && agent.alive) {
           def.onTurnStart?.(state, agent, emit);

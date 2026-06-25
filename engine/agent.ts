@@ -86,6 +86,12 @@ export async function takeTurn(
       // exactly two calls per turn: update_beliefs, then one game action.
       toolChoice: 'required',
       stopWhen: [stepCountIs(2)],
+      // Prompt caching (AI Gateway v4): cache the stable system + transcript prefix
+      // that every turn re-sends, so re-reading it is cheap on tokens and faster.
+      // 'auto' adds explicit cache_control markers for providers that need them
+      // (Anthropic) and is a no-op for providers that cache implicitly (OpenAI/
+      // Google/DeepSeek). Verifiable via result.usage.cachedInputTokens.
+      providerOptions: { gateway: { caching: 'auto' } },
       // Don't let a single slow/hung provider stall the table forever.
       abortSignal: AbortSignal.timeout(TURN_TIMEOUT_MS),
     });

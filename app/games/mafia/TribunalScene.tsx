@@ -1417,10 +1417,13 @@ function ActionOverlay(props: Props) {
   return (
     <div
       style={{
-        // raised above the caption (which sits at the very bottom)
+        // raised above the caption (which sits at the very bottom) and, crucially,
+        // above the bottom-center voice dock (z-40) which otherwise overlaps these
+        // pick buttons and swallows the click.
         position: 'absolute',
         left: '50%',
         bottom: 22,
+        zIndex: 45,
         transform: 'translateX(-50%)',
         display: 'flex',
         gap: 10,
