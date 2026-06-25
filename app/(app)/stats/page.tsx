@@ -1,10 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { useAuth } from "../_components/AuthProvider";
-import { UserButton } from "../_components/UserButton";
+import { useAuth } from "../../_components/AuthProvider";
 
 const RECORD: [string, string][] = [
   ["Played", "0"],
@@ -15,46 +12,10 @@ const RECORD: [string, string][] = [
 const LEADERBOARD: { rank: number; name: string; wins: number }[] = [];
 
 export default function StatsPage() {
-  const { ready, signedIn, hasProfile, profile } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!ready) return;
-    if (!signedIn) {
-      router.replace("/");
-    } else if (!hasProfile) {
-      router.replace("/onboarding");
-    }
-  }, [ready, signedIn, hasProfile, router]);
-
-  if (!ready || !signedIn || !hasProfile) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-black">
-        <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/15 border-t-white" />
-      </div>
-    );
-  }
+  const { profile } = useAuth();
 
   return (
-    <div className="flex min-h-screen flex-col bg-black text-white">
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-black/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between px-5 sm:px-8">
-          <Link href="/explore" className="font-display text-lg font-bold tracking-tight">
-            Adversary
-          </Link>
-          <div className="flex items-center gap-6">
-            <Link
-              href="/explore"
-              className="text-sm font-bold uppercase tracking-wide text-white/60 transition-colors hover:text-white"
-            >
-              Explore
-            </Link>
-            <UserButton />
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-12 sm:px-8">
+    <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-12 sm:px-8">
         <h1 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">Stats</h1>
 
         <section className="mt-10">
@@ -110,7 +71,6 @@ export default function StatsPage() {
             </div>
           )}
         </section>
-      </main>
-    </div>
+    </main>
   );
 }

@@ -1,44 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
-import { useAuth } from "../_components/AuthProvider";
-import { UserButton } from "../_components/UserButton";
 import { GAMES, type Game } from "./_games";
 
-const ACCENTS: Record<string, { line: string; glow: string; text: string }> = {
-  ai: { line: "linear-gradient(90deg, var(--ai-1), var(--ai-2))", glow: "var(--ai-1)", text: "var(--ai-1)" },
-  human: { line: "linear-gradient(90deg, var(--human-2), var(--human-1))", glow: "var(--human-1)", text: "var(--human-2)" },
-  collision: { line: "linear-gradient(90deg, var(--ai-2), var(--collision), var(--human-1))", glow: "var(--collision)", text: "var(--collision)" },
-};
-
 export default function ExplorePage() {
-  const { ready, signedIn, hasProfile, profile } = useAuth();
-  const router = useRouter();
-
-  useEffect(() => {
-    if (!ready) return;
-    if (!signedIn) {
-      router.replace("/");
-    } else if (!hasProfile) {
-      router.replace("/onboarding");
-    }
-  }, [ready, signedIn, hasProfile, router]);
-
-  if (!ready || !signedIn || !hasProfile) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-stage">
-        <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/15 border-t-white" />
-      </div>
-    );
-  }
-
   const featured = GAMES.find((g) => g.status === "live") ?? GAMES[0];
 
-
   return (
-    <div className="relative flex min-h-screen flex-col overflow-x-clip bg-stage text-foreground">
+    <>
       {/* ambient brand glow — the two poles, faint, behind everything */}
       <div
         aria-hidden
@@ -51,25 +20,7 @@ export default function ExplorePage() {
         style={{ backgroundImage: "url(/ai-gradient.png)", backgroundSize: "cover" }}
       />
 
-      {/* ── header ── */}
-      <header className="sticky top-0 z-40 border-b border-[var(--hairline)] bg-stage/70 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
-          <Link href="/" className="font-display text-lg font-bold tracking-tight">
-            Adversary
-          </Link>
-          <nav className="flex items-center gap-6">
-            <Link
-              href="/stats"
-              className="font-mono text-xs font-medium uppercase tracking-[0.18em] text-[var(--text-muted)] transition-colors hover:text-white"
-            >
-              Stats
-            </Link>
-            <UserButton />
-          </nav>
-        </div>
-      </header>
-
-      <main className="relative mx-auto w-full max-w-6xl flex-1 px-5 pb-24 pt-14 sm:px-8 sm:pt-20">
+      <main className="relative mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 pb-12 pt-14 sm:px-8 sm:pt-20">
         {/* ── page title ── */}
         <h1 className="fade-up mb-8 font-display text-2xl font-semibold tracking-tight text-white/90">
           Explore our games
@@ -80,10 +31,12 @@ export default function ExplorePage() {
           <FeaturedCard g={featured} />
         </section>
 
-        {/* ── more arenas ── */}
-        
+        {/* ── more coming soon ── */}
+        <p className="fade-up mt-auto pt-16 text-center font-mono text-[11px] uppercase tracking-[0.3em] text-white/25">
+          More coming soon
+        </p>
       </main>
-    </div>
+    </>
   );
 }
 
