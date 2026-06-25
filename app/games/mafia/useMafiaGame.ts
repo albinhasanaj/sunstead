@@ -514,10 +514,17 @@ export function useMafiaGame() {
     return () => clearInterval(iv);
   }, [running]);
 
+  // Tear the game down when the screen unmounts (e.g. you hit "Leave game" and
+  // navigate away): abort the SSE stream so the server loop doesn't linger as a
+  // zombie session, and stop the tension bed. Without this a left game keeps
+  // running server-side and the next game overlaps it — the "everything's weird
+  // after you leave" bug. (AbortError is swallowed by start()'s catch.)
   useEffect(
     () => () => {
       clearTimeout(speakTimerRef.current ?? undefined);
       clearTimeout(announceTimer.current ?? undefined);
+      abortRef.current?.abort();
+      musicRef.current?.pause();
     },
     [],
   );

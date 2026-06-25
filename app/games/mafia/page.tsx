@@ -128,6 +128,13 @@ export default function Home() {
         <button onClick={() => setShowLog((v) => !v)} title="Full transcript" className={FLOAT_BTN}>
           📜 Transcript
         </button>
+        <button
+          onClick={() => start(mode, devRole)}
+          title="Restart — abandon this game and deal a fresh one"
+          className={`${FLOAT_BTN} !border-amber-500/40 !text-amber-200 hover:!bg-amber-500/15`}
+        >
+          ↻ Restart
+        </button>
         <Link href="/explore" title="Leave the game" className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}>
           ⏻ Leave game
         </Link>
