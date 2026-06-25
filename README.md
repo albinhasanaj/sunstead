@@ -95,7 +95,12 @@ pnpm typecheck
       a 3D UI replaces it later).
 - [x] **Human-in-the-loop**: watch or play a seat via text, with fair fog of war
       (`engine/human.ts`, `app/api/game/action`, `lib/gameSessions.ts`).
-- [ ] Phase 4 — ElevenLabs TTS on `speak`.
-- [ ] Phase 5 — music + SFX.
-- [ ] Phase 6 — human voice-in via Scribe (swap text input for mic).
+- [x] **Phase 4 — voice**: ElevenLabs TTS per seat (`voice/tts.ts`, `voice/voiceMap.ts`,
+      `app/api/tts`). The client plays spoken lines in order via an audio queue;
+      🔊 master toggle. `eleven_flash_v2_5` (~0.6s/line).
+- [x] **Phase 5 — score**: ElevenLabs Music bed that ducks at night + SFX cues on
+      night/death/reveal/win (`voice/score.ts`, `app/api/music`, `app/api/sfx`).
+      Generated audio is cached in-process (one bed + 4 cues ≈ a few credits total).
+- [x] **Phase 6 — human voice-in**: push-to-talk → ElevenLabs Scribe STT → your
+      move (`voice/stt.ts`, `app/api/stt`, `usePushToTalk`). Hold 🎤 on your turn.
 - [ ] Phase 7 — Detective / Doctor roles (tools + resolution already stubbed in).

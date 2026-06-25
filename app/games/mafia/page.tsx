@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useVoiceQueue } from './useVoiceQueue';
+import { usePushToTalk } from './usePushToTalk';
 
 // ── shapes mirrored from engine/types GameEvent (kept loose on the client) ──────
 type Player = { id: string; name: string; role: string; model?: string | null; alive: boolean; human?: boolean };
@@ -43,6 +45,22 @@ export default function Home() {
   const [gameId, setGameId] = useState<string | null>(null);
   const [humanId, setHumanId] = useState<string | null>(null);
   const [turn, setTurn] = useState<Turn | null>(null);
+  const [voiceOn, setVoiceOn] = useState(true);
+
+  const voice = useVoiceQueue();
+  const musicRef = useRef<HTMLAudioElement | null>(null);
+  const soundOnRef = useRef(true);
+
+  const playSfx = useCallback((cue: string) => {
+    if (!soundOnRef.current) return;
+    try {
+      const a = new Audio(`/api/sfx?cue=${cue}`);
+      a.volume = 0.5;
+      void a.play().catch(() => {});
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const abortRef = useRef<AbortController | null>(null);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
@@ -53,6 +71,14 @@ export default function Home() {
   useEffect(() => {
     feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [feed, turn]);
+
+  // Keep all audio (voices, music, SFX) in sync with the 🔊 toggle.
+  useEffect(() => {
+    voice.setEnabled(voiceOn);
+    soundOnRef.current = voiceOn;
+    if (!voiceOn) musicRef.current?.pause();
+    else if (musicRef.current?.src) void musicRef.current.play().catch(() => {});
+  }, [voiceOn, voice]);
 
   const handle = useCallback(
     (e: any) => {
@@ -67,15 +93,20 @@ export default function Home() {
           setPhase({ phase: e.phase, round: e.round });
           setSelected((s) => s ?? e.players.find((p: Player) => p.human)?.id ?? e.players[0]?.id ?? null);
           break;
-        case 'phase':
+        case 'phase': {
           setPhase({ phase: e.phase, round: e.round });
           setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
+          const night = e.phase === 'NIGHT';
+          if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
+          if (night) playSfx('night');
           break;
+        }
         case 'beliefs':
           setBeliefs((b) => ({ ...b, [e.agent]: { reasoning: e.reasoning, suspicions: e.suspicions } }));
           break;
         case 'speak':
           setFeed((f) => [...f, { k: 'speak', who: e.agent, text: e.text }]);
+          voice.enqueue(nameOf(e.agent), e.text);
           break;
         case 'whisper':
           setFeed((f) => [...f, { k: 'whisper', who: e.agent, text: e.text }]);
@@ -83,10 +114,12 @@ export default function Home() {
         case 'death':
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, role: e.role } : p)));
           setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night (${e.role}).` }]);
+          playSfx('death');
           break;
         case 'reveal':
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, role: e.role } : p)));
           setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out — they were ${e.role}.` }]);
+          playSfx('reveal');
           break;
         case 'vote':
           setFeed((f) => [...f, { k: 'vote', who: e.agent, target: e.target }]);
@@ -97,6 +130,8 @@ export default function Home() {
         case 'win':
           setWinner(e.winner);
           setFeed((f) => [...f, { k: 'win', winner: e.winner }]);
+          playSfx('win');
+          if (musicRef.current) musicRef.current.volume = 0.05;
           break;
         case 'done':
           setTurn(null);
@@ -106,7 +141,7 @@ export default function Home() {
           break;
       }
     },
-    [nameOf],
+    [nameOf, voice, playSfx],
   );
 
   const start = useCallback(
@@ -123,6 +158,16 @@ export default function Home() {
       setSelected(null);
       setMode(m);
       setRunning(true);
+      voice.reset();
+
+      // Start the looping tension bed (first load generates it server-side, ~5s).
+      const bed = musicRef.current;
+      if (bed && soundOnRef.current) {
+        bed.src = '/api/music';
+        bed.loop = true;
+        bed.volume = 0.12;
+        void bed.play().catch(() => {});
+      }
 
       try {
         const res = await fetch('/api/game', {
@@ -153,7 +198,7 @@ export default function Home() {
         setRunning(false);
       }
     },
-    [handle],
+    [handle, voice],
   );
 
   const submitAction = useCallback(
@@ -179,6 +224,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 font-mono">
+      <audio ref={musicRef} hidden />
       <header className="flex items-center justify-between border-b border-neutral-800 px-5 py-3">
         <div className="flex items-baseline gap-3">
           <Link
@@ -204,6 +250,13 @@ export default function Home() {
           {winner && <span className="text-xs font-bold text-amber-400">🏆 {winner.toUpperCase()} WINS</span>}
         </div>
         <div className="flex gap-2">
+          <button
+            onClick={() => setVoiceOn((v) => !v)}
+            title={voiceOn ? 'Mute voices' : 'Enable voices'}
+            className="rounded border border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-900"
+          >
+            {voiceOn ? '🔊' : '🔇'}
+          </button>
           <button
             onClick={() => start('watch')}
             disabled={running}
@@ -324,14 +377,43 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
   const [text, setText] = useState('');
   const [target, setTarget] = useState('');
   const [discussKind, setDiscussKind] = useState<'speak' | 'accuse' | 'defend'>('speak');
+  const ptt = usePushToTalk((t) => setText((prev) => (prev ? `${prev} ${t}` : t)));
 
   const alive = turn.alive;
   const phase = turn.phase;
 
+  const Mic = () => (
+    <button
+      type="button"
+      onMouseDown={ptt.start}
+      onMouseUp={ptt.stop}
+      onMouseLeave={() => ptt.status === 'recording' && ptt.stop()}
+      onTouchStart={(e) => {
+        e.preventDefault();
+        ptt.start();
+      }}
+      onTouchEnd={(e) => {
+        e.preventDefault();
+        ptt.stop();
+      }}
+      title="Hold to talk"
+      className={`rounded border px-3 py-1.5 text-sm transition ${
+        ptt.status === 'recording'
+          ? 'border-red-500 bg-red-500/20 text-red-300'
+          : ptt.status === 'transcribing'
+            ? 'border-amber-500/50 text-amber-300'
+            : 'border-neutral-700 hover:bg-neutral-800'
+      }`}
+    >
+      {ptt.status === 'recording' ? '● rec' : ptt.status === 'transcribing' ? '…' : '🎤'}
+    </button>
+  );
+
   return (
     <div className="border-t border-amber-500/30 bg-neutral-900/80 px-5 py-3">
-      <div className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-400">
+      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-400">
         Your turn · {phase}
+        <span className="font-normal normal-case text-neutral-500">· hold 🎤 to speak your move</span>
       </div>
 
       {phase === 'DISCUSSION' && (
@@ -362,6 +444,7 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
             className="min-w-[240px] flex-1 rounded border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm"
             onKeyDown={(e) => e.key === 'Enter' && submitDiscussion()}
           />
+          <Mic />
           <button onClick={submitDiscussion} className="rounded bg-amber-500 px-4 py-1.5 text-sm font-semibold text-neutral-950 hover:bg-amber-400">
             Send
           </button>
@@ -400,6 +483,7 @@ function ActionBar({ turn, onSubmit }: { turn: Turn; onSubmit: (tool: string, ar
                 placeholder="whisper to your team…"
                 className="flex-1 rounded border border-neutral-700 bg-neutral-950 px-3 py-1.5 text-sm"
               />
+              <Mic />
               <button
                 onClick={() => text && onSubmit('mafia_discuss', { message: text })}
                 className="rounded border border-fuchsia-500/40 px-3 py-1.5 text-sm font-semibold text-fuchsia-200 hover:bg-fuchsia-500/10"
