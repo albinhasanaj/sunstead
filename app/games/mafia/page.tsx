@@ -223,7 +223,7 @@ export default function Home() {
       )}
 
       {/* menu → gameplay transition (role reveal for play, cinematic for watch) */}
-      {intro && <IntroOverlay mode={intro} role={myRole} onDone={() => setIntro(null)} />}
+      {intro && <IntroOverlay mode={intro} role={myRole} teammates={teammates.map(nameOf)} onDone={() => setIntro(null)} />}
 
       {/* you died — full-screen takeover: spectate the rest, or leave to the lobby.
           Shown a beat after death (deathReady) so the outcome announcement lands

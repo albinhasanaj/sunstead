@@ -16,7 +16,17 @@ const ROLE_META: Record<string, { tag: string; color: string; blurb: string }> =
   unknown: { tag: 'Town', color: '#9aa3c0', blurb: 'Take your seat at the table.' },
 };
 
-export default function IntroOverlay({ mode, role, onDone }: { mode: 'play' | 'watch'; role: string; onDone: () => void }) {
+export default function IntroOverlay({
+  mode,
+  role,
+  teammates = [],
+  onDone,
+}: {
+  mode: 'play' | 'watch';
+  role: string;
+  teammates?: string[]; // names of your Mafia allies (only relevant when you're Mafia)
+  onDone: () => void;
+}) {
   const [label, setLabel] = useState<string>(REVEAL_ROLES[0]);
   const [landed, setLanded] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -147,6 +157,33 @@ export default function IntroOverlay({ mode, role, onDone }: { mode: 'play' | 'w
           >
             {landed ? meta.blurb : ''}
           </p>
+
+          {/* when you land on Mafia, reveal who you're conspiring with */}
+          {landed && label === 'mafia' && (
+            <div
+              className="mt-5 flex flex-col items-center transition-opacity duration-500"
+              style={{ animation: 'introIn .6s ease .15s both' }}
+            >
+              <p className="text-[10px] font-semibold uppercase tracking-[0.4em] text-neutral-500">
+                {teammates.length ? (teammates.length > 1 ? 'Your allies' : 'Your ally') : 'No allies'}
+              </p>
+              {teammates.length ? (
+                <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2">
+                  {teammates.map((name) => (
+                    <span
+                      key={name}
+                      className="rounded-full border px-3 py-1 text-sm font-medium"
+                      style={{ borderColor: `${ROLE_META.mafia.color}55`, color: ROLE_META.mafia.color, background: `${ROLE_META.mafia.color}1a` }}
+                    >
+                      {name}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-neutral-400">You&apos;re the lone wolf.</p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
