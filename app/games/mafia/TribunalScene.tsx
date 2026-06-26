@@ -15,6 +15,7 @@
 //    loop always sees current values without re-subscribing.
 
 import { useEffect, useRef } from 'react';
+import { Skull, Search, Shield, Gavel } from 'lucide-react';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -1421,7 +1422,7 @@ function ActionStyles() {
 // ── HTML overlay: action buttons, derived from the pending `turn` payload ─────────
 // Shows only the legal target-based actions for this phase/role. Free-text actions
 // (DISCUSSION speech, mafia whispers) are handled by the page's ActionBar.
-type ActionDef = { tool: string; label: string; danger?: boolean; targets: { id: string; name: string }[] };
+type ActionDef = { tool: string; label: string; Icon: typeof Skull; danger?: boolean; targets: { id: string; name: string }[] };
 function ActionOverlay(props: Props) {
   const { turn, accusedId, players, onAction } = props;
   // only the human's own turn drives buttons
@@ -1431,12 +1432,16 @@ function ActionOverlay(props: Props) {
   const selName = sel?.name ?? '';
 
   const defs: ActionDef[] = [];
-  if (legal.includes('mafia_propose_kill')) defs.push({ tool: 'mafia_propose_kill', label: selName ? `Kill ${selName}` : 'Pick a target', danger: true, targets: turn.killTargets ?? [] });
-  if (legal.includes('investigate')) defs.push({ tool: 'investigate', label: selName ? `Investigate ${selName}` : 'Pick someone to investigate', targets: turn.investigateTargets ?? [] });
-  if (legal.includes('protect')) defs.push({ tool: 'protect', label: selName ? `Protect ${selName}` : 'Pick someone to protect', targets: turn.protectTargets ?? [] });
-  if (legal.includes('vote')) defs.push({ tool: 'vote', label: selName ? `Vote out ${selName}` : 'Pick someone to vote', targets: turn.alive ?? [] });
+  if (legal.includes('mafia_propose_kill')) defs.push({ tool: 'mafia_propose_kill', label: `Kill ${selName}`, Icon: Skull, danger: true, targets: turn.killTargets ?? [] });
+  if (legal.includes('investigate')) defs.push({ tool: 'investigate', label: `Investigate ${selName}`, Icon: Search, targets: turn.investigateTargets ?? [] });
+  if (legal.includes('protect')) defs.push({ tool: 'protect', label: `Protect ${selName}`, Icon: Shield, targets: turn.protectTargets ?? [] });
+  if (legal.includes('vote')) defs.push({ tool: 'vote', label: `Vote out ${selName}`, Icon: Gavel, targets: turn.alive ?? [] });
 
-  if (defs.length === 0) return null;
+  // Only surface a button once a valid target is actually picked — there's no
+  // empty/greyed "pick a target" state. Until then the bottom-center belongs to
+  // the voice dock, whose hint line carries the "click a face" guidance.
+  const ready = defs.filter((d) => !!accusedId && d.targets.some((tg) => tg.id === accusedId));
+  if (ready.length === 0) return null;
 
   return (
     <div
@@ -1446,7 +1451,7 @@ function ActionOverlay(props: Props) {
         // pick buttons and swallows the click.
         position: 'absolute',
         left: '50%',
-        bottom: 22,
+        bottom: 40,
         zIndex: 45,
         transform: 'translateX(-50%)',
         display: 'flex',
@@ -1456,17 +1461,19 @@ function ActionOverlay(props: Props) {
         fontFamily: 'ui-monospace, monospace',
       }}
     >
-      {defs.map((d) => {
-        const enabled = !!accusedId && d.targets.some((tg) => tg.id === accusedId);
+      {ready.map((d) => {
+        const Icon = d.Icon;
         return (
           <button
             key={d.tool}
-            disabled={!enabled}
-            onClick={enabled ? () => onAction(d.tool, { target: accusedId }) : undefined}
+            onClick={() => onAction(d.tool, { target: accusedId })}
             data-kind={d.danger ? 'danger' : undefined}
             className={`tribunal-action${d.danger ? ' tribunal-action--danger' : ''}`}
           >
-            {d.label}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>
+              <Icon size={16} strokeWidth={2.25} />
+              {d.label}
+            </span>
           </button>
         );
       })}

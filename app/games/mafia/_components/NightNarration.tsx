@@ -26,8 +26,14 @@ export default function NightNarration({ wake, myRole }: { wake: string | null; 
         <div className="mt-2 text-lg font-light tracking-[0.22em] text-indigo-50/85">{b.text}</div>
       </div>
       <style>{`
-        @keyframes nightBeat { 0%{opacity:0; transform:translateY(8px)} 30%{opacity:1; transform:none} 100%{opacity:1} }
-        .night-beat { animation: nightBeat .6s ease forwards; }
+        @keyframes nightBeat {
+          0%{opacity:0; transform:translateY(8px)}
+          12%{opacity:1; transform:none}
+          78%{opacity:1; transform:none}
+          100%{opacity:0; transform:translateY(-6px)}
+        }
+        /* fade in, hold, then drift away so the centre of the scene clears */
+        .night-beat { animation: nightBeat 4.5s ease forwards; }
       `}</style>
     </div>
   );

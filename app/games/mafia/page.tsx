@@ -84,6 +84,24 @@ export default function Home() {
     signalComposing,
   } = useMafiaGame();
 
+  // A "target-pick" turn = a night action (kill/investigate/protect) or the vote:
+  // you click a face, then a single confirm button appears. Until a face is picked
+  // the bottom-center belongs to the voice dock (whose hint nudges you to click);
+  // once it is, we hide the dock so the lone action button is the only control.
+  const pickTurn = myTurn && myTurn.phase !== 'DISCUSSION' ? myTurn : null;
+  const pickPrompt = !pickTurn
+    ? ''
+    : pickTurn.legal.includes('mafia_propose_kill')
+    ? 'click a face to choose tonight’s victim'
+    : pickTurn.legal.includes('investigate')
+    ? 'click a face to investigate'
+    : pickTurn.legal.includes('protect')
+    ? 'click a face to protect'
+    : pickTurn.legal.includes('vote')
+    ? 'click a face to cast your vote'
+    : '';
+  const targetChosen = !!pickTurn && !!selected && selected !== humanId;
+
   return (
     <main className="fixed inset-0 bg-black text-neutral-100 font-mono">
       <audio ref={musicRef} hidden />
@@ -278,8 +296,10 @@ export default function Home() {
       {/* Mafia private channel — see what your partner is thinking / proposing */}
       {showMafiaChannel && <MafiaChannel teammates={teammates} humanId={humanId} killVotesByAgent={killVotesByAgent} nameOf={nameOf} />}
 
-      {/* bottom-center voice dock — the game's primary control */}
-      {running && !winner && mode === 'play' && !!me?.alive && (
+      {/* bottom-center voice dock — the game's primary control. Hidden the moment a
+          target is picked on a night/vote turn, so the lone confirm button (kill/
+          investigate/protect/vote) owns the bottom-center with no overlap. */}
+      {running && !winner && mode === 'play' && !!me?.alive && !targetChosen && (
         <VoiceDock
           voiceOn={voiceOn}
           onToggleVoice={() => setVoiceOn((v) => !v)}
@@ -287,8 +307,10 @@ export default function Home() {
           // waiting for a turn. The loop folds your line in and the AIs react to it.
           active={inDiscussion}
           waiting={false}
+          // On a target turn the hint nudges you to click a face; otherwise it just
+          // states the phase mood.
           phaseLabel={
-            phase?.phase === 'NIGHT' ? 'the night is silent' : phase?.phase === 'VOTE' ? 'the table is voting…' : ''
+            pickPrompt || (phase?.phase === 'NIGHT' ? 'the night is silent' : phase?.phase === 'VOTE' ? 'the table is voting…' : '')
           }
           speaking={!!speakingId}
           addresseeName={addresseeName}

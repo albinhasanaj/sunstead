@@ -1,6 +1,6 @@
 'use client';
 
-import { Skull, Sword } from 'lucide-react';
+import { Skull, Target, Check } from 'lucide-react';
 
 // Mafia private channel — your allies + the targets they've silently picked.
 export default function MafiaChannel({
@@ -15,32 +15,55 @@ export default function MafiaChannel({
   nameOf: (id: string) => string;
 }) {
   const team = [...(humanId ? [humanId] : []), ...teammates];
+  const myPick = humanId ? killVotesByAgent[humanId] : undefined;
   return (
-    <div className="absolute left-3 top-16 z-30 flex max-h-[42vh] w-72 flex-col rounded-xl border border-fuchsia-500/30 bg-neutral-950/80 backdrop-blur">
-      <div className="border-b border-fuchsia-500/20 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-fuchsia-300">
-          <Skull className="h-3.5 w-3.5" />
-          Mafia · night
-        </div>
-        <div className="mt-0.5 truncate text-[10px] text-fuchsia-300/60">
-          {teammates.length ? `with ${teammates.map((id) => nameOf(id)).join(', ')}` : 'you’re the lone wolf'}
+    <div className="absolute left-3 top-16 z-30 flex w-64 flex-col overflow-hidden rounded-xl border border-red-500/30 bg-neutral-950/85 backdrop-blur">
+      {/* header */}
+      <div className="flex items-center gap-2 border-b border-red-500/20 bg-red-500/5 px-3 py-2">
+        <Skull className="h-4 w-4 text-red-400" />
+        <div className="flex flex-col leading-tight">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-red-300">Mafia · night</span>
+          <span className="truncate text-[10px] text-red-300/50">
+            {teammates.length ? `with ${teammates.map((id) => nameOf(id)).join(', ')}` : 'you’re the lone wolf'}
+          </span>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-1.5">
-        <p className="text-[11px] leading-snug text-fuchsia-300/60">No talking at night — point at a victim. Click a face in the scene, then press Kill.</p>
-        {team.map((id) => {
-          const pick = killVotesByAgent[id];
-          return (
-            <p key={id} className="text-xs leading-snug text-fuchsia-200/90">
-              <span className="font-semibold">
-                {nameOf(id)}
-                {id === humanId ? ' (you)' : ''}:
-              </span>{' '}
-              {pick ? <span className="inline-flex items-center gap-1 text-red-300"><Sword className="h-3 w-3" /> {nameOf(pick)}</span> : <span className="text-neutral-500">choosing…</span>}
-            </p>
-          );
-        })}
+
+      {/* the one instruction that matters, stated as a single clear action */}
+      <div className="flex items-start gap-2 px-3 py-2.5">
+        <Target className="mt-0.5 h-4 w-4 shrink-0 text-red-400/80" />
+        <p className="text-[11px] leading-snug text-neutral-300">
+          {myPick ? (
+            <>You’re killing <span className="font-semibold text-red-300">{nameOf(myPick)}</span> tonight. Click another face to change.</>
+          ) : (
+            <>Click a face in the scene, then press <span className="font-semibold text-red-300">Kill</span>.</>
+          )}
+        </p>
       </div>
+
+      {/* team pick status — only worth showing when you actually have partners */}
+      {teammates.length > 0 && (
+        <div className="border-t border-red-500/15 px-3 py-2 space-y-1">
+          {team.map((id) => {
+            const pick = killVotesByAgent[id];
+            return (
+              <div key={id} className="flex items-center justify-between text-[11px]">
+                <span className="text-neutral-400">
+                  {nameOf(id)}
+                  {id === humanId ? ' (you)' : ''}
+                </span>
+                {pick ? (
+                  <span className="inline-flex items-center gap-1 font-medium text-red-300">
+                    <Check className="h-3 w-3" /> {nameOf(pick)}
+                  </span>
+                ) : (
+                  <span className="text-neutral-600">choosing…</span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
