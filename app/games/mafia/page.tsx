@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Eye, EyeOff, Users, ScrollText, Skull, RotateCcw, LogOut, Timer, SkipForward, Gavel, Check } from 'lucide-react';
+import { Eye, EyeOff, Users, ScrollText, LogOut, Timer, SkipForward, Gavel, Check } from 'lucide-react';
 import TribunalScene from './TribunalScene';
 import { useMafiaGame } from './useMafiaGame';
 import { FLOAT_BTN, ROLE_STYLE } from './constants';
@@ -28,6 +28,8 @@ export default function Home() {
   // Watch mode: reveal every agent's secret role (overhead tags + drawer badges).
   // Defaults on so spectators can see who the Mafia is; toggle off for a blind watch.
   const [revealRoles, setRevealRoles] = useState(true);
+  // Guards the Leave-game button so a stray click can't drop you out of a live round.
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   // Everything that touches the engine — game state, audio pacing, phase timers,
   // and the derived view-model — lives in this one hook.
@@ -61,7 +63,6 @@ export default function Home() {
     deathReady,
     spectating,
     spectate,
-    suicide,
     me,
     myRole,
     myTurn,
@@ -140,29 +141,42 @@ export default function Home() {
           <ScrollText className="h-3.5 w-3.5" />
           Transcript
         </button>
-        {process.env.NODE_ENV !== 'production' && mode === 'play' && running && !winner && !!me?.alive && (
-          <button
-            onClick={suicide}
-            title="Dev: take your own life to jump straight to the death screen"
-            className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}
-          >
-            <Skull className="h-3.5 w-3.5" />
-            Suicide
-          </button>
-        )}
         <button
-          onClick={() => start(mode, devRole)}
-          title="Restart — abandon this game and deal a fresh one"
-          className={`${FLOAT_BTN} !border-amber-500/40 !text-amber-200 hover:!bg-amber-500/15`}
+          onClick={() => setConfirmLeave(true)}
+          title="Leave the game and return to the lobby"
+          className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}
         >
-          <RotateCcw className="h-3.5 w-3.5" />
-          Restart
-        </button>
-        <Link href="/explore" title="Leave the game and return to the lobby" className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}>
           <LogOut className="h-3.5 w-3.5" />
           Leave game
-        </Link>
+        </button>
       </div>
+
+      {/* leave-game confirmation — a stray click shouldn't drop you out of a live round */}
+      {confirmLeave && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="w-[20rem] rounded-xl border border-neutral-700/70 bg-neutral-950/95 p-5 text-center shadow-2xl">
+            <div className="mb-1 text-sm font-semibold text-neutral-100">Leave the game?</div>
+            <p className="mb-4 text-xs leading-snug text-neutral-400">
+              You’ll abandon this round and return to the lobby. This can’t be undone.
+            </p>
+            <div className="flex justify-center gap-2">
+              <button
+                onClick={() => setConfirmLeave(false)}
+                className={FLOAT_BTN}
+              >
+                Stay
+              </button>
+              <Link
+                href="/explore"
+                className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Leave
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* phase countdown — generous; just a pacing indicator + skip target */}
       {running && !winner && secondsLeft != null && (
