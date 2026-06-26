@@ -1,5 +1,7 @@
 'use client';
 
+import { Skull, Sword } from 'lucide-react';
+
 // Mafia private channel — your allies + the targets they've silently picked.
 export default function MafiaChannel({
   teammates,
@@ -16,7 +18,10 @@ export default function MafiaChannel({
   return (
     <div className="absolute left-3 top-16 z-30 flex max-h-[42vh] w-72 flex-col rounded-xl border border-fuchsia-500/30 bg-neutral-950/80 backdrop-blur">
       <div className="border-b border-fuchsia-500/20 px-3 py-2">
-        <div className="text-[11px] font-semibold uppercase tracking-wider text-fuchsia-300">🔪 Mafia · night</div>
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-fuchsia-300">
+          <Skull className="h-3.5 w-3.5" />
+          Mafia · night
+        </div>
         <div className="mt-0.5 truncate text-[10px] text-fuchsia-300/60">
           {teammates.length ? `with ${teammates.map((id) => nameOf(id)).join(', ')}` : 'you’re the lone wolf'}
         </div>
@@ -31,7 +36,7 @@ export default function MafiaChannel({
                 {nameOf(id)}
                 {id === humanId ? ' (you)' : ''}:
               </span>{' '}
-              {pick ? <span className="text-red-300">⚔ {nameOf(pick)}</span> : <span className="text-neutral-500">choosing…</span>}
+              {pick ? <span className="inline-flex items-center gap-1 text-red-300"><Sword className="h-3 w-3" /> {nameOf(pick)}</span> : <span className="text-neutral-500">choosing…</span>}
             </p>
           );
         })}

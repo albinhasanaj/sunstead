@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Volume2, VolumeX, Mic, Keyboard } from 'lucide-react';
 import { usePushToTalk } from '../usePushToTalk';
 
 // ── Bottom-center voice dock ─────────────────────────────────────────────────
@@ -112,7 +113,7 @@ export default function VoiceDock({
             voiceOn ? 'border-neutral-700/70 bg-neutral-950/70 text-neutral-200 hover:bg-neutral-800/80' : 'border-red-500/40 bg-red-500/10 text-red-300'
           }`}
         >
-          {voiceOn ? '🔊' : '🔇'}
+          {voiceOn ? <Volume2 className="h-5 w-5" /> : <VolumeX className="h-5 w-5" />}
         </button>
 
         {/* the orb — click to start, click again to stop & send */}
@@ -153,9 +154,9 @@ export default function VoiceDock({
                 ))}
               </span>
             ) : recording ? (
-              '●'
+              <span className="h-4 w-4 rounded-sm bg-current" />
             ) : (
-              '🎤'
+              <Mic className="h-7 w-7" />
             )}
           </span>
         </button>
@@ -167,7 +168,7 @@ export default function VoiceDock({
             textMode ? 'border-amber-400/60 bg-amber-500/15 text-amber-200' : 'border-neutral-700/70 bg-neutral-950/70 text-neutral-200 hover:bg-neutral-800/80'
           }`}
         >
-          ⌨
+          <Keyboard className="h-5 w-5" />
         </button>
       </div>
 

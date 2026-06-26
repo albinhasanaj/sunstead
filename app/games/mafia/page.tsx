@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
+import { Eye, EyeOff, Users, ScrollText, Skull, RotateCcw, LogOut, Timer, SkipForward, Gavel, Check } from 'lucide-react';
 import TribunalScene from './TribunalScene';
 import { useMafiaGame } from './useMafiaGame';
 import { FLOAT_BTN, ROLE_STYLE } from './constants';
@@ -127,14 +128,17 @@ export default function Home() {
             title={revealRoles ? 'Hide each agent’s secret role' : 'Reveal each agent’s secret role'}
             className={`${FLOAT_BTN} ${revealRoles ? '!border-red-500/40 !text-red-200 hover:!bg-red-500/15' : ''}`}
           >
-            {revealRoles ? '🕵️ Roles shown' : '🎭 Roles hidden'}
+            {revealRoles ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+            {revealRoles ? 'Roles shown' : 'Roles hidden'}
           </button>
         )}
-        <button onClick={() => setShowPlayers((v) => !v)} title="The table" className={FLOAT_BTN}>
-          👥 Players
+        <button onClick={() => setShowPlayers((v) => !v)} title="Open the table — see every player and their status" className={FLOAT_BTN}>
+          <Users className="h-3.5 w-3.5" />
+          Players
         </button>
-        <button onClick={() => setShowLog((v) => !v)} title="Full transcript" className={FLOAT_BTN}>
-          📜 Transcript
+        <button onClick={() => setShowLog((v) => !v)} title="Open the full transcript of everything that's been said" className={FLOAT_BTN}>
+          <ScrollText className="h-3.5 w-3.5" />
+          Transcript
         </button>
         {process.env.NODE_ENV !== 'production' && mode === 'play' && running && !winner && !!me?.alive && (
           <button
@@ -142,7 +146,8 @@ export default function Home() {
             title="Dev: take your own life to jump straight to the death screen"
             className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}
           >
-            ☠ Suicide
+            <Skull className="h-3.5 w-3.5" />
+            Suicide
           </button>
         )}
         <button
@@ -150,18 +155,21 @@ export default function Home() {
           title="Restart — abandon this game and deal a fresh one"
           className={`${FLOAT_BTN} !border-amber-500/40 !text-amber-200 hover:!bg-amber-500/15`}
         >
-          ↻ Restart
+          <RotateCcw className="h-3.5 w-3.5" />
+          Restart
         </button>
-        <Link href="/explore" title="Leave the game" className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}>
-          ⏻ Leave game
+        <Link href="/explore" title="Leave the game and return to the lobby" className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}>
+          <LogOut className="h-3.5 w-3.5" />
+          Leave game
         </Link>
       </div>
 
       {/* phase countdown — generous; just a pacing indicator + skip target */}
       {running && !winner && secondsLeft != null && (
         <div className="absolute left-1/2 top-10 z-30 -translate-x-1/2 rounded-full border border-neutral-700/60 bg-neutral-950/70 px-3 py-1 text-xs tabular-nums tracking-wider text-neutral-300 backdrop-blur">
-          <span className={secondsLeft <= 10 ? 'text-amber-300' : ''}>
-            ⏱ {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
+          <span className={`flex items-center gap-1.5 ${secondsLeft <= 10 ? 'text-amber-300' : ''}`}>
+            <Timer className="h-3.5 w-3.5" />
+            {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
           </span>
         </div>
       )}
@@ -184,7 +192,8 @@ export default function Home() {
         <div className={`absolute right-3 z-40 flex flex-col items-end gap-2 transition-all duration-300 ${showBar ? 'bottom-24' : 'bottom-4'}`}>
           {myTurn && (
             <button onClick={skipTurn} title="Pass — take no action this turn" className={FLOAT_BTN}>
-              ⏭ Skip my turn
+              <SkipForward className="h-3.5 w-3.5" />
+              Skip my turn
             </button>
           )}
           {inDiscussion && (
@@ -197,7 +206,8 @@ export default function Home() {
               title="Call to end discussion early — only fast-forwards if the table agrees"
               className={`${FLOAT_BTN} ${wantsSkip ? '!border-amber-400/70 !bg-amber-500/15 !text-amber-200' : ''}`}
             >
-              {wantsSkip ? '✓ Waiting for the table…' : '⏭ Move to vote'}
+              {wantsSkip ? <Check className="h-3.5 w-3.5" /> : <Gavel className="h-3.5 w-3.5" />}
+              {wantsSkip ? 'Waiting for the table…' : 'Move to vote'}
             </button>
           )}
         </div>
