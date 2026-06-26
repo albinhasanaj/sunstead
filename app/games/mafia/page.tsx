@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Eye, EyeOff, Users, ScrollText, LogOut, Timer, SkipForward, Gavel, Check } from 'lucide-react';
+import { Eye, EyeOff, Users, ScrollText, LogOut, Timer, SkipForward, Gavel, Check, Target } from 'lucide-react';
 import TribunalScene from './TribunalScene';
 import { useMafiaGame } from './useMafiaGame';
 import { FLOAT_BTN, ROLE_STYLE } from './constants';
@@ -85,9 +85,9 @@ export default function Home() {
   } = useMafiaGame();
 
   // A "target-pick" turn = a night action (kill/investigate/protect) or the vote:
-  // you click a face, then a single confirm button appears. Until a face is picked
-  // the bottom-center belongs to the voice dock (whose hint nudges you to click);
-  // once it is, we hide the dock so the lone action button is the only control.
+  // you click a face, then a single confirm button appears. There's no talking on
+  // these turns, so the voice dock is hidden; a small standalone hint nudges you to
+  // click a face, and once one is picked the lone action button is the only control.
   const pickTurn = myTurn && myTurn.phase !== 'DISCUSSION' ? myTurn : null;
   const pickPrompt = !pickTurn
     ? ''
@@ -296,27 +296,33 @@ export default function Home() {
       {/* Mafia private channel — see what your partner is thinking / proposing */}
       {showMafiaChannel && <MafiaChannel teammates={teammates} humanId={humanId} killVotesByAgent={killVotesByAgent} nameOf={nameOf} />}
 
-      {/* bottom-center voice dock — the game's primary control. Hidden the moment a
-          target is picked on a night/vote turn, so the lone confirm button (kill/
-          investigate/protect/vote) owns the bottom-center with no overlap. */}
-      {running && !winner && mode === 'play' && !!me?.alive && !targetChosen && (
+      {/* bottom-center voice dock — only while you can actually talk, which is the
+          ENTIRE discussion phase (you may interject any time, uninterrupted). At
+          night and during the vote there's no talking, so the dock is hidden and the
+          target-pick flow owns the bottom-center instead. */}
+      {running && !winner && inDiscussion && (
         <VoiceDock
           voiceOn={voiceOn}
           onToggleVoice={() => setVoiceOn((v) => !v)}
-          // Real-time interjection: during discussion you can speak whenever — no
+          // Real-time interjection: throughout discussion you can speak whenever — no
           // waiting for a turn. The loop folds your line in and the AIs react to it.
           active={inDiscussion}
           waiting={false}
-          // On a target turn the hint nudges you to click a face; otherwise it just
-          // states the phase mood.
-          phaseLabel={
-            pickPrompt || (phase?.phase === 'NIGHT' ? 'the night is silent' : phase?.phase === 'VOTE' ? 'the table is voting…' : '')
-          }
+          phaseLabel=""
           speaking={!!speakingId}
           addresseeName={addresseeName}
           onSend={sendSpeech}
           onComposing={signalComposing}
         />
+      )}
+
+      {/* night/vote target turns: no dock (you can't talk) — just a small hint to
+          click a face. It's swapped out for the confirm button once one is picked. */}
+      {running && !winner && pickTurn && !targetChosen && pickPrompt && (
+        <div className="pointer-events-none absolute bottom-11 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-neutral-700/60 bg-neutral-950/75 px-4 py-2 text-xs tracking-wide text-neutral-300 backdrop-blur">
+          <Target className="h-3.5 w-3.5 text-neutral-400" />
+          {pickPrompt}
+        </div>
       )}
 
       {/* left drawer — the table (toggled by the Players button) */}

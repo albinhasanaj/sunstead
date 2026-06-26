@@ -175,7 +175,7 @@ export default function VoiceDock({
       {/* hint line */}
       <div className="text-[11px] tracking-wide text-neutral-400">
         {active || recording ? (
-          <span className="text-amber-200/90">your turn — {recording ? 'click to stop & send' : transcribing ? 'transcribing…' : 'click the mic to speak'}</span>
+          <span className="text-amber-200/90">{recording ? 'click to stop & send' : transcribing ? 'transcribing…' : 'speak any time — click the mic'}</span>
         ) : waiting ? (
           <span className="text-sky-300/80">listening — you’re up once the table finishes…</span>
         ) : (
