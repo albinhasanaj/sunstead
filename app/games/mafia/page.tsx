@@ -204,8 +204,11 @@ export default function Home() {
       {/* bottom-right turn controls: pass your turn / call a vote (consensus) */}
       {running && !winner && mode === 'play' && !!me?.alive && (
         <div className={`absolute right-3 z-40 flex flex-col items-end gap-2 transition-all duration-300 ${showBar ? 'bottom-24' : 'bottom-4'}`}>
-          {myTurn && (
-            <button onClick={skipTurn} title="Pass — take no action this turn" className={FLOAT_BTN}>
+          {/* Skip only passes a DISCUSSION turn (stay silent). Night actions
+              (kill/investigate/protect) and votes must be made deliberately —
+              they can't be skipped away. */}
+          {myTurn && myTurn.phase === 'DISCUSSION' && (
+            <button onClick={skipTurn} title="Stay silent — pass your turn to speak" className={FLOAT_BTN}>
               <SkipForward className="h-3.5 w-3.5" />
               Skip my turn
             </button>
