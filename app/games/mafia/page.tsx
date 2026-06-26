@@ -274,7 +274,7 @@ export default function Home() {
       <PlayersDrawer open={showPlayers} players={players} selected={selected} onSelect={setSelected} turn={turn} hideRoles={mode === 'watch' && !revealRoles} />
 
       {/* right drawer — the full transcript (toggled by the Transcript button) */}
-      <TranscriptDrawer open={showLog} feed={feed} nameOf={nameOf} feedEndRef={feedEndRef} />
+      <TranscriptDrawer open={showLog} feed={feed} thinkingIds={thinkingIds} phase={phase?.phase} nameOf={nameOf} feedEndRef={feedEndRef} />
     </main>
   );
 }
