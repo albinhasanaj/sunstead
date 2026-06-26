@@ -65,6 +65,9 @@ const updateBeliefs: GameTool = {
       .describe('Topics, player names, or claim-types that would pull you in to speak (e.g. "doctor claim", "Gemini", "vote on me").'),
   }),
   legalIn: () => true,
+  // Prep, not an action: this records private state and must NOT end the turn. The
+  // engine forces a real public action in a separate step after this one.
+  prep: true,
   execute: async (args, ctx: ToolContext) => {
     const map: Record<PlayerId, number> = {};
     for (const s of args.suspicions ?? []) {

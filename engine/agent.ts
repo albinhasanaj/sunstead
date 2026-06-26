@@ -29,22 +29,25 @@ export async function takeTurn(
   console.log(`[turn] ▶ ${agent.name} (${state.phase} r${state.round}) — tools: ${legalTools.map((t) => t.name).join(', ')}`);
 
   // Wrap each GameTool as an AI SDK tool. The execute mutates state + emits events.
-  const tools = Object.fromEntries(
-    legalTools.map((t) => [
-      t.name,
-      tool({
-        description: t.description,
-        inputSchema: t.inputSchema,
-        execute: async (args: any) => {
-          // Defend the game rules even if the model calls something out of phase.
-          if (!t.legalIn(state, agent)) {
-            return `Illegal move: ${t.name} is not allowed for you right now.`;
-          }
-          return t.execute(args, ctx);
-        },
-      }),
-    ]),
-  );
+  const wrapTool = (t: (typeof legalTools)[number]) =>
+    tool({
+      description: t.description,
+      inputSchema: t.inputSchema,
+      execute: async (args: any) => {
+        // Defend the game rules even if the model calls something out of phase.
+        if (!t.legalIn(state, agent)) {
+          return `Illegal move: ${t.name} is not allowed for you right now.`;
+        }
+        return t.execute(args, ctx);
+      },
+    });
+  // Split the turn into two FORCED steps: the private "prep" tools (e.g.
+  // update_beliefs) first, then EXACTLY ONE turn-ending public action. Forcing the
+  // action in its own step is what stops a turn ending silently on beliefs alone —
+  // the old single 2-step call let a weak model spend BOTH steps on update_beliefs,
+  // so it "deliberated" then said nothing.
+  const prepTools = Object.fromEntries(legalTools.filter((t) => t.prep).map((t) => [t.name, wrapTool(t)]));
+  const actionTools = Object.fromEntries(legalTools.filter((t) => !t.prep).map((t) => [t.name, wrapTool(t)]));
 
   const baseContext = (def.renderContext ?? defaultRenderContext)(state, agent);
 
@@ -78,29 +81,44 @@ export async function takeTurn(
   // Each seat can run on its own model (any AI Gateway string); fall back to the
   // game-wide model, then the engine default.
   const model = (agent.private.model as string) ?? def.model ?? DEFAULT_MODEL;
+  // A seat may carry its own, tighter timeout: a model that reliably stalls (e.g.
+  // DeepSeek on the free tier) is failed over to the fallback sooner instead of
+  // burning the full budget every turn.
+  const timeoutMs = Number(agent.private.timeoutMs) || TURN_TIMEOUT_MS;
 
-  const run = (m: string) =>
-    generateText({
+  // One attempt on model `m` = two forced steps (prep, then exactly one public
+  // action), sharing a single timeout budget so the whole turn is still hard-capped.
+  const run = async (m: string) => {
+    const timeout = AbortSignal.timeout(timeoutMs);
+    // Don't let a single slow/hung provider stall the table forever — and let a
+    // human barge-in (opts.signal) cancel the in-flight line on top of that.
+    const signal = opts?.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
+    const base = {
       model: m, // routed via AI Gateway (AI_GATEWAY_API_KEY)
       system: def.systemPrompt(state, agent),
-      prompt,
-      tools,
-      // 'required' forces genuine tool use; with stepCountIs(2) the agent makes
-      // exactly two calls per turn: update_beliefs, then one game action.
-      toolChoice: 'required',
-      stopWhen: [stepCountIs(2)],
       // Prompt caching (AI Gateway v4): cache the stable system + transcript prefix
-      // that every turn re-sends, so re-reading it is cheap on tokens and faster.
-      // 'auto' adds explicit cache_control markers for providers that need them
-      // (Anthropic) and is a no-op for providers that cache implicitly (OpenAI/
-      // Google/DeepSeek). Verifiable via result.usage.cachedInputTokens.
+      // that every turn re-sends. 'auto' adds cache_control for providers that need
+      // it (Anthropic) and is a no-op for those that cache implicitly.
       providerOptions: { gateway: { caching: 'auto' } },
-      // Don't let a single slow/hung provider stall the table forever — and let a
-      // human barge-in (opts.signal) cancel the in-flight line on top of that.
-      abortSignal: opts?.signal
-        ? AbortSignal.any([AbortSignal.timeout(TURN_TIMEOUT_MS), opts.signal])
-        : AbortSignal.timeout(TURN_TIMEOUT_MS),
+      abortSignal: signal,
+    };
+    // Step 1 — private prep (beliefs). Skipped for games with no prep tool.
+    if (Object.keys(prepTools).length > 0) {
+      await generateText({ ...base, prompt, tools: prepTools, toolChoice: 'required', stopWhen: [stepCountIs(1)] });
+    }
+    // Step 2 — EXACTLY ONE turn-ending public action, so the seat always acts. Hand
+    // the model its own just-recorded read for continuity between the two steps.
+    const actionPrompt = agent.private.notes
+      ? `${prompt}\n\nYour private read (just recorded): ${agent.private.notes}\nNow take exactly ONE public action.`
+      : prompt;
+    await generateText({
+      ...base,
+      prompt: actionPrompt,
+      tools: Object.keys(actionTools).length > 0 ? actionTools : prepTools,
+      toolChoice: 'required',
+      stopWhen: [stepCountIs(1)],
     });
+  };
 
   // Light up "thinking" for this seat while its single LLM turn runs. A parallel
   // scheduler can have several of these lit at once — the UI/terminal use it to

@@ -29,6 +29,7 @@ function setup(playerNames: string[]): GameState {
       name,
       model: forced || known?.model || FALLBACK_MODEL,
       trait: known?.trait ?? 'a sharp, observant player who keeps their cards close.',
+      timeoutMs: known?.timeoutMs,
     };
   });
 
@@ -39,7 +40,7 @@ function setup(playerNames: string[]): GameState {
     name: p.name,
     alive: true,
     role: roles[i],
-    private: { model: p.model, trait: p.trait, suspicions: {}, notes: '' },
+    private: { model: p.model, trait: p.trait, timeoutMs: p.timeoutMs, suspicions: {}, notes: '' },
   }));
 
   return {

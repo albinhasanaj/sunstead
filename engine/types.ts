@@ -28,6 +28,10 @@ export interface GameTool {
   inputSchema: ZodTypeAny;
   legalIn: (state: GameState, agent: AgentState) => boolean; // phase/role legality
   execute: (args: any, ctx: ToolContext) => Promise<string>; // returns result string
+  // A "prep" tool records private state and does NOT end the turn (e.g. Mafia's
+  // update_beliefs). The engine runs prep tools in a first forced step, then forces
+  // exactly one non-prep action — so a turn can never end without a visible move.
+  prep?: boolean;
 }
 
 export interface ToolContext {
