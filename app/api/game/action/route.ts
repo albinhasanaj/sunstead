@@ -42,6 +42,21 @@ export async function POST(req: Request) {
     return Response.json({ ok: true });
   }
 
+  // Dev/testing: the human removes their own seat. Mark them dead in the live state
+  // so the loop skips them from here on (and re-checks the win condition), then
+  // resolve any turn they were parked on so the round continues without waiting.
+  if (control === 'suicide') {
+    const human = session.humanId ? session.state?.players.find((p) => p.id === session.humanId) : null;
+    if (human) human.alive = false;
+    if (session.pending) {
+      const pending = session.pending;
+      session.pending = null;
+      pending.resolve(null);
+    }
+    session.wake?.();
+    return Response.json({ ok: true });
+  }
+
   if (!session.pending) return Response.json({ ok: false, error: 'not your turn' }, { status: 409 });
 
   // Skip / pass the current turn (resolve null — the engine treats it as no action).

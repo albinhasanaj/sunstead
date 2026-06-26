@@ -54,6 +54,17 @@ export function useMafiaGame() {
   // Phase countdown + the "ready to move to vote" toggle.
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [wantsSkip, setWantsSkip] = useState(false);
+  // You (the human) were eliminated — holds the cause + your now-sealed fate; null
+  // while you're alive. Set the instant you die (so it immediately suppresses the
+  // game-over menu, even if the same vote ends the round), while `deathReady` arms a
+  // beat later — letting the death announcement + sting land before the screen takes
+  // over the view.
+  const [eliminated, setEliminated] = useState<{ cause: 'voted' | 'killed'; role: string } | null>(null);
+  const [deathReady, setDeathReady] = useState(false);
+  // True once you choose to keep watching after dying: the camera drops into the free
+  // spectator vantage (same POV as watch-the-agents) for the rest of the round.
+  const [spectating, setSpectating] = useState(false);
+  const deathTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -74,6 +85,16 @@ export function useMafiaGame() {
     setAnnounce(a);
     if (announceTimer.current) clearTimeout(announceTimer.current);
     announceTimer.current = setTimeout(() => setAnnounce(null), 4200);
+  }, []);
+
+  // Your own death: let the announcement banner + sting play, then raise the
+  // full-screen death screen. We capture your role now (you always know your own).
+  const armDeathScreen = useCallback((cause: 'voted' | 'killed', e: { target?: string; role?: string }) => {
+    const role = e.role ?? playersRef.current.find((p) => p.id === e.target)?.role ?? 'unknown';
+    setEliminated({ cause, role }); // immediate → the game-over menu can't sneak in first
+    setDeathReady(false);
+    if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
+    deathTimerRef.current = setTimeout(() => setDeathReady(true), 2400);
   }, []);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -201,12 +222,14 @@ export function useMafiaGame() {
           setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.` }]);
           showAnnounce({ eyebrow: 'Killed in the night', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('death');
+          if (e.target === humanIdRef.current) armDeathScreen('killed', e);
           break;
         case 'reveal':
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
           setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.` }]);
           showAnnounce({ eyebrow: 'Voted out by the table', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('reveal');
+          if (e.target === humanIdRef.current) armDeathScreen('voted', e);
           break;
         case 'night':
           // Anonymous night outcome — no names of who was targeted or who saved them.
@@ -266,7 +289,7 @@ export function useMafiaGame() {
           break;
       }
     },
-    [nameOf, voice, playSfx, showAnnounce, ackVoiceDone],
+    [nameOf, voice, playSfx, showAnnounce, ackVoiceDone, armDeathScreen],
   );
 
   const start = useCallback(
@@ -293,6 +316,10 @@ export function useMafiaGame() {
       setAnnounce(null);
       setSecondsLeft(null);
       setWantsSkip(false);
+      setEliminated(null);
+      setDeathReady(false);
+      setSpectating(false);
+      if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
       announcedTeamRef.current = false;
       setMode(m);
       setRunning(true);
@@ -396,6 +423,30 @@ export function useMafiaGame() {
     },
     [gameId],
   );
+
+  // You chose to keep watching after dying: drop the death screen and switch to the
+  // free spectator camera (same POV as watch-the-agents) for the rest of the round.
+  const spectate = useCallback(() => {
+    if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
+    setEliminated(null);
+    setDeathReady(false);
+    setSpectating(true);
+    setMode('watch');
+  }, []);
+
+  // Dev/testing only: take your own life so you can reach the death screen without
+  // waiting to be voted out or killed. Removes you from the live game server-side
+  // (the round plays on without your turns) and raises the death screen locally.
+  const suicide = useCallback(() => {
+    const id = humanIdRef.current;
+    if (!id) return;
+    setPlayers((ps) => ps.map((p) => (p.id === id ? { ...p, alive: false } : p)));
+    setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(id)} met a sudden end.` }]);
+    showAnnounce({ eyebrow: 'A sudden end', title: nameOf(id), face: nameOf(id), tone: 'death' });
+    playSfx('death');
+    armDeathScreen('killed', { target: id });
+    postControl({ control: 'suicide' }); // tell the loop to drop our seat so it continues
+  }, [nameOf, showAnnounce, playSfx, armDeathScreen, postControl]);
 
   const myTurn = turn && humanId && turn.agent === humanId ? turn : null;
   const me = humanId ? players.find((p) => p.id === humanId) : null;
@@ -523,6 +574,7 @@ export function useMafiaGame() {
     () => () => {
       clearTimeout(speakTimerRef.current ?? undefined);
       clearTimeout(announceTimer.current ?? undefined);
+      clearTimeout(deathTimerRef.current ?? undefined);
       abortRef.current?.abort();
       musicRef.current?.pause();
     },
@@ -558,6 +610,11 @@ export function useMafiaGame() {
     secondsLeft,
     wantsSkip,
     setWantsSkip,
+    eliminated,
+    deathReady,
+    spectating,
+    spectate,
+    suicide,
     // derived view-model
     me,
     myRole,

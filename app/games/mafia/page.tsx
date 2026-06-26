@@ -6,6 +6,7 @@ import TribunalScene from './TribunalScene';
 import { useMafiaGame } from './useMafiaGame';
 import { FLOAT_BTN, ROLE_STYLE } from './constants';
 import AnnouncementBanner from './_components/AnnouncementBanner';
+import DeathScreen from './_components/DeathScreen';
 import IntroOverlay from './_components/IntroOverlay';
 import MafiaChannel from './_components/MafiaChannel';
 import MenuOverlay from './_components/MenuOverlay';
@@ -55,6 +56,11 @@ export default function Home() {
     secondsLeft,
     wantsSkip,
     setWantsSkip,
+    eliminated,
+    deathReady,
+    spectating,
+    spectate,
+    suicide,
     me,
     myRole,
     myTurn,
@@ -85,7 +91,9 @@ export default function Home() {
         <TribunalScene
           players={players}
           phase={phase?.phase ?? 'DISCUSSION'}
-          myId={humanId}
+          // Once you die and choose to spectate, drop the seat: null id flips the
+          // scene into the free orbit camera (the watch-the-agents vantage).
+          myId={spectating ? null : humanId}
           myRole={myRole}
           speakingId={speakingId}
           thinkingId={mode === 'play' && phase?.phase === 'NIGHT' ? null : (thinkingIds[0] ?? null)}
@@ -128,6 +136,15 @@ export default function Home() {
         <button onClick={() => setShowLog((v) => !v)} title="Full transcript" className={FLOAT_BTN}>
           📜 Transcript
         </button>
+        {process.env.NODE_ENV !== 'production' && mode === 'play' && running && !winner && !!me?.alive && (
+          <button
+            onClick={suicide}
+            title="Dev: take your own life to jump straight to the death screen"
+            className={`${FLOAT_BTN} !border-red-500/40 !text-red-200 hover:!bg-red-500/15`}
+          >
+            ☠ Suicide
+          </button>
+        )}
         <button
           onClick={() => start(mode, devRole)}
           title="Restart — abandon this game and deal a fresh one"
@@ -186,8 +203,10 @@ export default function Home() {
         </div>
       )}
 
-      {/* full-screen menu — doubles as the entry and game-over screen */}
-      {!running && (
+      {/* full-screen menu — doubles as the entry and game-over screen. Held back
+          while your death screen is up so a round that ended *with* your death shows
+          the death screen first, not a jarring jump to the menu. */}
+      {!running && !eliminated && (
         <MenuOverlay
           winner={winner}
           devRole={devRole}
@@ -205,6 +224,13 @@ export default function Home() {
 
       {/* menu → gameplay transition (role reveal for play, cinematic for watch) */}
       {intro && <IntroOverlay mode={intro} role={myRole} onDone={() => setIntro(null)} />}
+
+      {/* you died — full-screen takeover: spectate the rest, or leave to the lobby.
+          Shown a beat after death (deathReady) so the outcome announcement lands
+          first; independent of winner/running so it survives a round-ending death. */}
+      {eliminated && deathReady && (
+        <DeathScreen cause={eliminated.cause} role={eliminated.role} winner={winner} onSpectate={spectate} />
+      )}
 
       {/* night narrator — calls the roles to "wake up" in sequence */}
       {running && phase?.phase === 'NIGHT' && <NightNarration wake={nightWake} myRole={myRole} />}
