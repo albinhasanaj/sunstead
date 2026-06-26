@@ -25,13 +25,17 @@ export async function POST(req: Request) {
   if (control === 'say') {
     if (typeof tool === 'string') {
       session.pendingSay = { tool, args: args ?? {} };
+      session.turnAbort?.abort(); // barge-in: drop any in-flight AI line so yours lands first
       session.wake?.(); // wake the pacing loop so it injects (and the AIs react) now
     }
     return Response.json({ ok: true });
   }
-  // The human is mid-compose (holding the mic / typing): hold the floor for them.
+  // The human is mid-compose (holding the mic / typing): take the floor now — cancel
+  // an AI line that's mid-generation, and hold the floor so none starts until they
+  // send or stop.
   if (control === 'composing') {
     session.composingUntil = Date.now() + 9000; // refreshed by client heartbeats
+    session.turnAbort?.abort(); // barge-in the moment they start, not just on send
     session.wake?.();
     return Response.json({ ok: true });
   }

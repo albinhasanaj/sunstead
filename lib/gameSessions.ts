@@ -32,6 +32,11 @@ export interface GameSession {
   // Resolver that wakes the loop's current pacing wait the instant a client signal
   // (say / composing / voice-done) arrives, so it reacts without polling latency.
   wake?: (() => void) | null;
+  // Abort handle for the AI turn currently being generated during DISCUSSION. When
+  // the human takes the floor (starts composing or sends a line) we abort it so the
+  // in-flight, human-blind line is dropped instead of landing before their words.
+  // Null whenever no interruptible AI turn is in flight (night/vote, human turn, idle).
+  turnAbort?: AbortController | null;
 }
 
 const g = globalThis as unknown as { __mafiaSessions?: Map<string, GameSession> };

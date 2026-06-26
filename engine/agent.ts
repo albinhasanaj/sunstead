@@ -15,6 +15,9 @@ export async function takeTurn(
   state: GameState,
   agent: AgentState,
   emit: Emit,
+  // Optional external abort (e.g. a human barging into the discussion): when it
+  // fires we drop this turn silently rather than retrying — see the catch below.
+  opts?: { signal?: AbortSignal },
 ): Promise<void> {
   const ctx: ToolContext = { state, agent, emit };
   const legalTools = def.toolsFor(state, agent).filter((t) => t.legalIn(state, agent));
@@ -92,8 +95,11 @@ export async function takeTurn(
       // (Anthropic) and is a no-op for providers that cache implicitly (OpenAI/
       // Google/DeepSeek). Verifiable via result.usage.cachedInputTokens.
       providerOptions: { gateway: { caching: 'auto' } },
-      // Don't let a single slow/hung provider stall the table forever.
-      abortSignal: AbortSignal.timeout(TURN_TIMEOUT_MS),
+      // Don't let a single slow/hung provider stall the table forever — and let a
+      // human barge-in (opts.signal) cancel the in-flight line on top of that.
+      abortSignal: opts?.signal
+        ? AbortSignal.any([AbortSignal.timeout(TURN_TIMEOUT_MS), opts.signal])
+        : AbortSignal.timeout(TURN_TIMEOUT_MS),
     });
 
   // Light up "thinking" for this seat while its single LLM turn runs. A parallel
@@ -106,6 +112,12 @@ export async function takeTurn(
       await run(model);
       console.log(`[turn]   ${agent.name} · LLM (${model}) took ${Date.now() - llmStart}ms`);
     } catch (err) {
+      // Human barge-in: the floor was handed to a person mid-turn. Drop this
+      // (now-stale, human-blind) line silently — retrying would talk over them.
+      if (opts?.signal?.aborted) {
+        console.log(`[turn]   ${agent.name} · interrupted by human — dropping turn`);
+        return;
+      }
       const timedOut = (err as Error)?.name === 'TimeoutError' || /abort|timeout/i.test((err as Error)?.message ?? '');
       const why = timedOut ? `timed out after ${Date.now() - llmStart}ms` : `failed: ${(err as Error).message}`;
       // A single provider hiccup (rate limit, gated model, hang) shouldn't stall the

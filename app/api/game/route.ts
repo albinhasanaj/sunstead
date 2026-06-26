@@ -1,5 +1,6 @@
-import { runGame } from '@/engine/orchestrator';
-import { withHuman, type HumanController } from '@/engine/human';
+import { runGame, type TurnFn } from '@/engine/orchestrator';
+import { humanTurn, type HumanController } from '@/engine/human';
+import { takeTurn } from '@/engine/agent';
 import { mafiaGame } from '@/games/mafia';
 import type { AgentState, GameEvent, GameState, GameTool } from '@/engine/types';
 import { sessions, type GameSession, type HumanChoice } from '@/lib/gameSessions';
@@ -147,6 +148,21 @@ export async function POST(req: Request) {
         await injectPendingSay(state);
       }
 
+      // How each seat takes its turn. Human → controller. AI in DISCUSSION → an
+      // interruptible LLM turn: we hand the loop an AbortController so a human taking
+      // the floor (composing/say, via the action route) cancels the in-flight line
+      // rather than letting a pre-formed, human-blind thought land first. AI outside
+      // discussion (silent night/vote picks) runs plain — nothing to barge into.
+      const turnFn: TurnFn = (def, state, agent, emit) => {
+        if (agent.private.human) return humanTurn(def, state, agent, emit, controller_);
+        if (state.phase !== 'DISCUSSION') return takeTurn(def, state, agent, emit);
+        const ac = new AbortController();
+        session.turnAbort = ac;
+        return takeTurn(def, state, agent, emit, { signal: ac.signal }).finally(() => {
+          if (session.turnAbort === ac) session.turnAbort = null;
+        });
+      };
+
       try {
         await runGame(
           mafiaGame,
@@ -188,7 +204,7 @@ export async function POST(req: Request) {
               })),
             });
           },
-          withHuman(controller_),
+          turnFn,
           turnDelayMs,
           beatHook,
         );
