@@ -184,10 +184,7 @@ function urge(state: GameState, p: AgentState, recent: LogLine[], d: Disc): numb
   //    a third voice can break into the duel.
   s += antiMonopolyBoost(state, p.id);
 
-  // 6) PERSONA — loud seats volunteer; quiet, calculating seats hold back.
-  s += personaBias(p);
-
-  // 7) a little extra noise so it never feels mechanical.
+  // 6) a little extra noise so it never feels mechanical.
   s += Math.random() * 0.1;
   return s;
 }
@@ -211,34 +208,8 @@ function antiMonopolyBoost(state: GameState, candidateId: PlayerId): number {
   return dominators.has(candidateId) ? 0 : 0.5; // boost only the OUTSIDERS
 }
 
-// Loud ↔ quiet baseline. Known seats get a hand-tuned delta (justified by their trait);
-// an unknown/custom seat derives one from trait keywords. Cached on the seat so we
-// don't re-parse the trait string every beat.
-const PERSONA_BIAS: Record<string, number> = {
-  Grok: 0.2, // roasts everyone — always has a quip
-  Gemini: 0.15, // know-it-all who dazzles — volunteers facts
-  Llama: 0.1, // open-book, shares freely
-  GPT: 0.05, // agreeable diplomat — engages, but hedged
-  Qwen: 0.0, // chameleon — reactive, neutral baseline
-  Claude: -0.05, // weighs every side — deliberate, slightly held back
-  Mistral: -0.1, // says little, wastes no words
-  DeepSeek: -0.15, // quiet, reveals nothing early — most reserved
-};
-const PERSONA_LOUD = ['roast', 'snark', 'dazzle', 'confident', 'know-it-all', 'shares freely', 'open-book', 'loud', 'blunt', 'irreverent', 'jokester', 'assertive'];
-const PERSONA_QUIET = ['quiet', 'calculating', 'reveals nothing', 'minimalist', 'says little', 'reserved', 'careful', 'deliberate', 'weighs', 'principled', 'cautious'];
-function personaBias(p: AgentState): number {
-  if (typeof p.private._persona === 'number') return p.private._persona;
-  let delta = PERSONA_BIAS[p.name];
-  if (delta === undefined) {
-    const t = String(p.private.trait ?? '').toLowerCase();
-    delta = 0;
-    for (const k of PERSONA_LOUD) if (t.includes(k)) delta += 0.05;
-    for (const k of PERSONA_QUIET) if (t.includes(k)) delta -= 0.05;
-    delta = Math.max(-0.15, Math.min(0.2, delta));
-  }
-  p.private._persona = delta;
-  return delta;
-}
+// Loud ↔ quiet baseline removed: every seat now speaks on an equal footing so the
+// model — not a hand-tuned personality — decides how often it takes the floor.
 
 const alive = (s: GameState) => s.players.filter((p) => p.alive);
 const aliveMafia = (s: GameState) => alive(s).filter((p) => isMafia(p.role));

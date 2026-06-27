@@ -16,7 +16,7 @@ engine/                 GAME-AGNOSTIC. No Mafia anywhere in here.
   events.ts             typed event bus + terminal renderer
 games/mafia/            the ONLY Mafia-specific code
   index.ts              the GameDefinition (the plug-in object)
-  roles.ts              roles + personalities (themed as AI models) + distribution
+  roles.ts              roles + seats (themed as AI models) + distribution
   phases.ts             NIGHT → DISCUSSION → VOTE, turn order, resolution
   tools.ts              update_beliefs, speak, accuse, defend, vote, mafia_* ...
   winCondition.ts       all Mafia dead → village; parity → mafia
@@ -57,9 +57,10 @@ Discussion isn't round-robin: each beat an **"urge to speak" auction** picks who
 talks. A seat's urge is assembled — with **zero extra LLM calls** — from signals it
 already produced in its own `update_beliefs` ("on-deck bid": `pressure`, `holding`,
 `triggers`) plus the live transcript: a seat whose self-authored trigger matches the
-last line jumps in *even unnamed*, a quieter seat breaks into a two-person duel
-(anti-monopoly), and loud/quiet personalities fall out of each seat's trait. See
-`urge()` in `games/mafia/phases.ts`; regression-tested token-free by
+last line jumps in *even unnamed*, and a quieter seat breaks into a two-person duel
+(anti-monopoly). Every seat is on equal footing — there is **no personality bias**, so
+how often a seat takes the floor is driven by the model itself, not a hand-tuned trait.
+See `urge()` in `games/mafia/phases.ts`; regression-tested token-free by
 `pnpm tsx scripts/probe-scheduler.ts`.
 
 - `MAFIA_DEBUG_URGE=1` — log every seat's score + the chosen floor, each beat.

@@ -16,9 +16,10 @@ function shuffle<T>(arr: T[]): T[] {
 }
 
 function setup(playerNames: string[], options?: SetupOptions): GameState {
-  // Names → seats. Each known character carries its own model + trait; an unknown
-  // custom name falls back to the default model and a neutral trait. With no names,
-  // use the default roster (the seats reachable on the free tier today).
+  // Names → seats. Each known character carries its own model; an unknown custom
+  // name falls back to the default model. With no names, use the default roster
+  // (the seats reachable on the free tier today). All seats get IDENTICAL
+  // instructions — the only variable is the underlying model.
   const names = playerNames.length ? playerNames : DEFAULT_ROSTER;
   // MAFIA_MODEL forces every seat onto one model — handy on the free tier where
   // only some providers are reachable. Otherwise each seat keeps its own model.
@@ -28,7 +29,6 @@ function setup(playerNames: string[], options?: SetupOptions): GameState {
     return {
       name,
       model: forced || known?.model || FALLBACK_MODEL,
-      trait: known?.trait ?? 'a sharp, observant player who keeps their cards close.',
       timeoutMs: known?.timeoutMs,
     };
   });
@@ -40,7 +40,7 @@ function setup(playerNames: string[], options?: SetupOptions): GameState {
     name: p.name,
     alive: true,
     role: roles[i],
-    private: { model: p.model, trait: p.trait, timeoutMs: p.timeoutMs, suspicions: {}, notes: '' },
+    private: { model: p.model, timeoutMs: p.timeoutMs, suspicions: {}, notes: '' },
   }));
 
   return {

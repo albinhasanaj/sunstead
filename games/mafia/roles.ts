@@ -20,7 +20,6 @@ export const isTown = (role: string) => role !== ROLE.MAFIA;
 export interface Personality {
   name: string;
   model: string; // routed model string — gateway `creator/model` or `featherless/<org>/<model>`
-  trait: string; // one line injected into the system prompt
   // Optional tighter per-seat LLM timeout (ms). For a model that reliably stalls on
   // the free tier, this fails it over to the fallback fast instead of burning the
   // full global budget every turn. Omit to use the global MAFIA_TURN_TIMEOUT_MS.
@@ -29,23 +28,23 @@ export interface Personality {
 
 export const PERSONALITIES: Personality[] = [
   // Closed-source seats route through the Vercel AI Gateway (AI_GATEWAY_API_KEY).
-  { name: 'GPT', model: 'openai/gpt-5.1-nano', trait: 'a polished, agreeable diplomat who hedges everything and always sounds reasonable, even when accusing.' },
-  { name: 'Claude', model: 'anthropic/claude-haiku-4.5', trait: 'a thoughtful, principled analyst who weighs every side carefully and refuses to accuse without reasoning it through.' },
-  { name: 'Gemini', model: 'google/gemini-2.5-flash', trait: 'a confident know-it-all who cites "data" for everything and dazzles the table with facts.' },
-  { name: 'Grok', model: 'xai/grok-4.1-fast-non-reasoning', trait: 'a snarky, irreverent jokester who roasts everyone at the table and hides sharp reads behind memes.' },
+  { name: 'GPT', model: 'openai/gpt-5.1-nano' },
+  { name: 'Claude', model: 'anthropic/claude-haiku-4.5' },
+  { name: 'Gemini', model: 'google/gemini-2.5-flash' },
+  { name: 'Grok', model: 'xai/grok-4.1-fast-non-reasoning' },
   // Open-weight seats route through Featherless (FEATHERLESS_API_KEY). IDs are the
   // HuggingFace org/repo the platform serves. DeepSeek keeps a tighter leash: it's
   // a large reasoning model and can blow past the global cap, so it fails over to
   // the gateway fallback (gemini) sooner instead of stalling the table.
-  { name: 'DeepSeek', model: 'featherless/deepseek-ai/DeepSeek-V3.1', timeoutMs: 20000, trait: 'a quiet, calculating strategist who reasons several moves ahead and reveals nothing early.' },
-  { name: 'Kimi', model: 'featherless/moonshotai/Kimi-K2-Instruct-0905', trait: 'a sharp, long-memoried observer who quietly tracks every contradiction and brings receipts.' },
-  { name: 'GLM', model: 'featherless/zai-org/GLM-4.6', trait: 'a measured, methodical reasoner who builds a case brick by brick and rarely overreaches.' },
-  { name: 'Qwen', model: 'featherless/Qwen/Qwen3-235B-A22B', trait: 'an adaptable, polite chameleon who mirrors whoever they talk to and shifts tactics on the fly.' },
-  { name: 'Llama', model: 'featherless/meta-llama/Llama-3.3-70B-Instruct', trait: 'a friendly open-book who shares freely and trusts the crowd, sometimes to a fault.' },
-  { name: 'Mistral', model: 'featherless/mistralai/Mistral-Small-3.2-24B-Instruct-2506', trait: 'a lean, blunt minimalist who says little, wastes no words, and cuts straight to the suspect.' },
+  { name: 'DeepSeek', model: 'featherless/deepseek-ai/DeepSeek-V3.1', timeoutMs: 20000 },
+  { name: 'Kimi', model: 'featherless/moonshotai/Kimi-K2-Instruct-0905' },
+  { name: 'GLM', model: 'featherless/zai-org/GLM-4.6' },
+  { name: 'Qwen', model: 'featherless/Qwen/Qwen3-235B-A22B' },
+  { name: 'Llama', model: 'featherless/meta-llama/Llama-3.3-70B-Instruct' },
+  { name: 'Mistral', model: 'featherless/mistralai/Mistral-Small-3.2-24B-Instruct-2506' },
 ];
 
-// Look up a seat's default model/trait by character name (case-insensitive).
+// Look up a seat's default model by character name (case-insensitive).
 export function personalityByName(name: string): Personality | undefined {
   return PERSONALITIES.find((p) => p.name.toLowerCase() === name.trim().toLowerCase());
 }

@@ -74,7 +74,7 @@ const HISTORY: Line[] = [
 
 function buildState(gameId: string): GameState {
   const mk = (id: string, role: string, alive = true): AgentState => ({
-    id, name: NAMES[id], alive, role, private: { model: MODEL, trait: traitOf(NAMES[id]), suspicions: {}, notes: '' },
+    id, name: NAMES[id], alive, role, private: { model: MODEL, suspicions: {}, notes: '' },
   });
   const players: AgentState[] = [
     mk('p1', 'villager'),
@@ -88,11 +88,6 @@ function buildState(gameId: string): GameState {
     players, phase: 'VOTE', round: 2, publicLog, winner: null,
     meta: { gameId, votes: {}, killProposals: {}, nightKill: null, protect: null, mafiaChat: [] },
   };
-}
-
-function traitOf(name: string): string {
-  if (name === 'Claude') return 'a thoughtful, principled analyst who weighs every side carefully and refuses to accuse without reasoning it through.';
-  return 'a sharp, observant player who keeps their cards close.';
 }
 
 // Mirror recordPublic(): every public (non-system) line is written to memory as it

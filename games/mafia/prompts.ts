@@ -25,12 +25,13 @@ export function visibleLog(state: GameState): GameState['publicLog'] {
 const teammates = (s: GameState, self: AgentState) =>
   s.players.filter((p) => isMafia(p.role) && p.id !== self.id);
 
-// Stable per-agent system prompt: goal + rules + personality + secret role.
+// Stable per-agent system prompt: goal + rules + secret role. Identical for every
+// seat (no personality/traits) so the only variable is the underlying model.
 // Policy lives here, never in the per-turn user message.
 export function systemPrompt(state: GameState, agent: AgentState): string {
   const lines: string[] = [
-    `You are ${agent.name}, ${agent.private.trait}`,
-    `You are playing Mafia, a social deduction game. Stay fully in character as ${agent.name} at all times.`,
+    `You are ${agent.name}.`,
+    `You are playing Mafia, a social deduction game. You are ${agent.name} at the table.`,
     '',
     'GLOBAL RULES:',
     '- Every turn: FIRST call update_beliefs to privately record your reasoning, THEN take exactly ONE game action.',
@@ -168,7 +169,7 @@ function instruction(state: GameState, agent: AgentState): string {
       const openLine = opener
         ? ' No one has spoken yet — you are opening the discussion, so lead with a concrete read of the living, not "what does everyone think?".'
         : '';
-      return `It is open discussion. Call update_beliefs, then take ONE action: speak, accuse, defend, or claim_role. Be persuasive and in-character.${deadLine}${openLine}`;
+      return `It is open discussion. Call update_beliefs, then take ONE action: speak, accuse, defend, or claim_role. Be persuasive.${deadLine}${openLine}`;
     }
     case PHASE.VOTE:
       return 'It is time to vote. Call update_beliefs, then vote to eliminate exactly one living player.';
