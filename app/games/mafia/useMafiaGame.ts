@@ -14,7 +14,7 @@ import { PHASE_SECS, MAFIA_CHANCE_START, MAFIA_CHANCE_STEP, MAFIA_CHANCE_KEY } f
 import type { Announce, Feed, Player, Turn } from './types';
 
 export function useMafiaGame() {
-  const { profile } = useAuth();
+  const { profile, userId } = useAuth();
   const [players, setPlayers] = useState<Player[]>([]);
   const [feed, setFeed] = useState<Feed[]>([]);
   const [phase, setPhase] = useState<{ phase: string; round: number } | null>(null);
@@ -368,6 +368,7 @@ export function useMafiaGame() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             mode: m,
+            ...(userId ? { userId } : {}),
             ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),
             ...(devRoleArg ? { devRole: devRoleArg } : {}),
             ...(mafiaCount ? { mafiaCount } : {}),
@@ -397,7 +398,7 @@ export function useMafiaGame() {
         setRunning(false);
       }
     },
-    [handle, voice, profile],
+    [handle, voice, profile, userId],
   );
 
   const submitAction = useCallback(

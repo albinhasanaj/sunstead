@@ -4,12 +4,12 @@
  * Same scenario, same model, same temperature (0) — run twice on the SAME built
  * GameState, the only difference being the long-term memory block:
  *   ARM A  (memory ON)  — recallForTurn() injects pgvector-recalled prior
- *                         statements (Aiven Postgres via MCP) into the prompt.
+ *                         statements (Postgres + pgvector) into the prompt.
  *   ARM B  (control)    — identical prompt, but no memory block (recall disabled).
  *
  * Unlike the first version, NOTHING is artificially held out of the transcript.
  * The round-1 history (including Gemini's DETECTIVE claim) is written to the
- * public log exactly as a real game would, AND mirrored into Aiven memory exactly
+ * public log exactly as a real game would, AND mirrored into memory exactly
  * as recordPublic() does. The MAFIA_CONTEXT_WINDOW caps the in-prompt transcript
  * to the most recent N entries, so by the round-2 vote the round-1 Detective claim
  * has scrolled OUT of the prompt on its own. The ONLY way to see it now is the
@@ -137,7 +137,7 @@ async function runTurn(state: GameState, agent: AgentState, withMemory: boolean)
   let memBlock: string | null = null;
   let prompt = baseContext;
   if (withMemory && mafiaGame.recallForTurn) {
-    memBlock = await mafiaGame.recallForTurn(state, agent); // real pgvector recall via Aiven MCP
+    memBlock = await mafiaGame.recallForTurn(state, agent); // real pgvector recall
     if (memBlock) prompt = `${baseContext}\n\n${memBlock}`;
   }
 
@@ -173,7 +173,7 @@ function writeArtifact(
     `- **Context window:** \`MAFIA_CONTEXT_WINDOW=${window}\` — the prompt shows only the`,
     '  most recent ' + window + ' public-log entries (real renderContext behavior).',
     '- The round-1 history — including Gemini\'s **Detective** claim — is a normal public',
-    '  line AND is mirrored into Aiven memory just like `recordPublic()`. Nothing is',
+    '  line AND is mirrored into long-term memory just like `recordPublic()`. Nothing is',
     '  held back by the script; the **window** is what scrolls round-1 out of the prompt.',
     `- **Detective claim still visible in the prompt window?** \`${claimVisible}\` ` +
       `(expected \`false\` — it has scrolled out).`,
@@ -197,8 +197,8 @@ function writeArtifact(
     '',
     '## ARM A (memory ON) — recalled block injected into the prompt',
     '',
-    'Produced by `mafiaGame.recallForTurn()` → `recall()` → Aiven `aiven_pg_read`',
-    'pgvector similarity search (excluding the visible window), as in the live loop:',
+    'Produced by `mafiaGame.recallForTurn()` → `recall()` → a pgvector',
+    'similarity search (excluding the visible window), as in the live loop:',
     '',
     '```',
     (a.memBlock ?? '(no memory recalled)').trim(),
@@ -240,14 +240,14 @@ function writeArtifact(
 
 async function main() {
   if (!memoryEnabled()) {
-    console.error('❌ AIVEN_TOKEN not set — this experiment needs live memory.');
+    console.error('❌ DATABASE_URL not set — this experiment needs live memory.');
     process.exit(1);
   }
   const window = contextWindow();
   const gameId = `exp-recall-${Date.now()}`;
   console.log(`model=${MODEL}  window=${window}  gameId=${gameId}`);
 
-  console.log('Seeding the whole game into Aiven memory (mirrors recordPublic)…');
+  console.log('Seeding the whole game into long-term memory (mirrors recordPublic)…');
   await seedMemory(gameId);
 
   const state = buildState(gameId);

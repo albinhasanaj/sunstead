@@ -3,7 +3,6 @@ import type { AgentState, GameState, GameTool, PlayerId, ToolContext } from '../
 import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
 import { remember } from '../../lib/memory';
-import { publish, TOPIC_TABLE, TOPIC_VOTES } from '../../lib/bus';
 
 // Resolve a player the model referred to by name (preferred) or id.
 function resolve(state: GameState, ref: string, opts: { aliveOnly?: boolean } = {}): AgentState | undefined {
@@ -18,15 +17,12 @@ function resolve(state: GameState, ref: string, opts: { aliveOnly?: boolean } = 
 
 const inPhase = (phase: string) => (state: GameState) => state.phase === phase;
 
-// Record a public line: persist to long-term memory (pgvector) AND publish it to
-// the Kafka table topic — both via Aiven MCP. Memory is awaited (so a later turn's
-// recall sees it); the Kafka publish is fire-and-forget so it never slows the turn.
-async function recordPublic(ctx: ToolContext, kind: string, text: string, target?: string): Promise<void> {
+// Record a public line by persisting it to long-term memory (pgvector). Awaited so
+// a later turn's recall is guaranteed to see it.
+async function recordPublic(ctx: ToolContext, text: string): Promise<void> {
   const gameId = ctx.state.meta.gameId as string;
-  await remember({ gameId, round: ctx.state.round, phase: ctx.state.phase, speaker: ctx.agent.name, text });
-  void publish(TOPIC_TABLE, {
-    kind, gameId, round: ctx.state.round, phase: ctx.state.phase, speaker: ctx.agent.name, text, target,
-  });
+  const userId = ctx.state.meta.userId as string | undefined;
+  await remember({ gameId, userId, round: ctx.state.round, phase: ctx.state.phase, speaker: ctx.agent.name, text });
 }
 
 // ── update_beliefs ────────────────────────────────────────────────────────────
@@ -104,7 +100,7 @@ const speak: GameTool = {
   execute: async (args, ctx) => {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: args.text });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: args.text });
-    await recordPublic(ctx, 'speak', args.text);
+    await recordPublic(ctx, args.text);
     return 'You spoke. Your turn is over.';
   },
 };
@@ -129,14 +125,14 @@ const accuse: GameTool = {
       if (!line) return 'No valid player to accuse — skip the accusation and speak instead.';
       ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
       ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
-      await recordPublic(ctx, 'speak', line);
+      await recordPublic(ctx, line);
       return 'You spoke (no valid accusation target). Your turn is over.';
     }
     const line = `I think ${t.name} is Mafia. ${args.reason}`;
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'accuse', target: t.id });
-    await recordPublic(ctx, 'accuse', line, t.name);
+    await recordPublic(ctx, line);
     return `You accused ${t.name}. Your turn is over.`;
   },
 };
@@ -157,7 +153,7 @@ const defend: GameTool = {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'defend', target: t?.id });
-    await recordPublic(ctx, 'defend', line, t?.name);
+    await recordPublic(ctx, line);
     return 'You made your defense. Your turn is over.';
   },
 };
@@ -176,7 +172,7 @@ const claimRole: GameTool = {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'claim_role' });
-    await recordPublic(ctx, 'claim', line);
+    await recordPublic(ctx, line);
     return 'You made your claim. Your turn is over.';
   },
 };
@@ -194,12 +190,6 @@ const vote: GameTool = {
     if (t.id === ctx.agent.id) return `You can't vote for yourself — choose a different living player.`;
     ctx.state.meta.votes = ctx.state.meta.votes ?? {};
     ctx.state.meta.votes[ctx.agent.id] = t.id;
-    // Publish the vote to the Kafka votes topic via MCP; the tally consumes it back.
-    // Awaited so the record is in Kafka before the (parallel) phase tallies.
-    await publish(TOPIC_VOTES, {
-      kind: 'vote', gameId: ctx.state.meta.gameId as string, round: ctx.state.round,
-      voter: ctx.agent.name, voterId: ctx.agent.id, target: t.name, targetId: t.id,
-    });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'vote', target: t.id });
     return `Your vote for ${t.name} is locked in. Your turn is over.`;
   },

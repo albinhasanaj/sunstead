@@ -12,6 +12,8 @@ import {
 const STORAGE_KEY = "sunstead.auth";
 
 export type GoogleUser = {
+  /** Stable per-user id (UUID). Fake today; drops in as the Supabase auth user id later. */
+  id: string;
   name: string;
   email: string;
   /** Seed used to render a deterministic generated avatar. */
@@ -37,6 +39,8 @@ type Stored = {
 type AuthValue = Stored & {
   /** False until localStorage has been read on the client. */
   ready: boolean;
+  /** Stable owning-user id sent to the server (null when signed out). */
+  userId: string | null;
   signedIn: boolean;
   hasProfile: boolean;
   signInWithGoogle: () => GoogleUser;
@@ -59,6 +63,7 @@ function fabricateGoogleUser(): GoogleUser {
   const handle = `${first}.${last}`.toLowerCase();
   const suffix = Math.floor(100 + Math.random() * 900);
   return {
+    id: crypto.randomUUID(),
     name: `${first} ${last}`,
     email: `${handle}${suffix}@gmail.com`,
     avatarSeed: `${handle}${suffix}`,
@@ -74,7 +79,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Stored;
-        setState({ user: parsed.user ?? null, profile: parsed.profile ?? null });
+        let user = parsed.user ?? null;
+        // Backfill a stable id for sessions saved before user ids existed.
+        if (user && !user.id) {
+          user = { ...user, id: crypto.randomUUID() };
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({ user, profile: parsed.profile ?? null }));
+          } catch {
+            // storage unavailable; the id stays in memory for this session
+          }
+        }
+        setState({ user, profile: parsed.profile ?? null });
       }
     } catch {
       // Ignore malformed storage; treat as signed out.
@@ -128,6 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => ({
       ...state,
       ready,
+      userId: state.user?.id ?? null,
       signedIn: state.user !== null,
       hasProfile: state.profile !== null,
       signInWithGoogle,

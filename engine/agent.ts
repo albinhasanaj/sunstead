@@ -1,5 +1,6 @@
 import { generateText, stepCountIs, tool } from 'ai';
 import type { AgentState, Emit, GameDefinition, GameState, ToolContext } from './types';
+import { resolveModel } from './models';
 
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6';
 
@@ -51,17 +52,17 @@ export async function takeTurn(
 
   const baseContext = (def.renderContext ?? defaultRenderContext)(state, agent);
 
-  // Long-term memory: let the game pull similar prior statements (pgvector via the
-  // Aiven MCP) and inject a contradiction-spotting block before the agent reasons.
+  // Long-term memory: let the game pull similar prior statements (pgvector) and
+  // inject a contradiction-spotting block before the agent reasons.
   // Memory must never break a turn, so any failure is swallowed.
   let prompt = baseContext;
   if (def.recallForTurn) {
     const t0 = Date.now();
     try {
       // Memory must never STALL a turn. recall() makes networked calls (embedding
-      // + Aiven MCP pgvector read); if that backend is slow or hangs, the whole
-      // game freezes waiting on it. Time-box it so a sluggish memory backend just
-      // means this one turn proceeds memory-less instead of locking up the game.
+      // + pgvector read); if that backend is slow or hangs, the whole game freezes
+      // waiting on it. Time-box it so a sluggish memory backend just means this one
+      // turn proceeds memory-less instead of locking up the game.
       const recallTimeoutMs = Number(process.env.MAFIA_RECALL_TIMEOUT_MS ?? 8000);
       let timer: ReturnType<typeof setTimeout> | undefined;
       const mem = await Promise.race([
@@ -94,7 +95,8 @@ export async function takeTurn(
     // human barge-in (opts.signal) cancel the in-flight line on top of that.
     const signal = opts?.signal ? AbortSignal.any([timeout, opts.signal]) : timeout;
     const base = {
-      model: m, // routed via AI Gateway (AI_GATEWAY_API_KEY)
+      // featherless/* → Featherless (open weights); everything else → AI Gateway.
+      model: resolveModel(m),
       system: def.systemPrompt(state, agent),
       // Prompt caching (AI Gateway v4): cache the stable system + transcript prefix
       // that every turn re-sends. 'auto' adds cache_control for providers that need

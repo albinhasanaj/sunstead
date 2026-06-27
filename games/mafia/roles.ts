@@ -11,12 +11,15 @@ export const isMafia = (role: string) => role === ROLE.MAFIA;
 export const isTown = (role: string) => role !== ROLE.MAFIA;
 
 // Each seat is named after a real AI lab and is driven by that lab's actual model
-// through the AI Gateway — the "every seat is a different model" thesis. `model`
-// is just a gateway `creator/model` string, so ANY gateway model works here; this
-// list is only the default catalog (personalities/models become dynamic options later).
+// — the "every seat is a different model" thesis. Routing is by prefix (see
+// engine/models.ts): closed-source labs (OpenAI, Anthropic, Google, xAI) run
+// through the Vercel AI Gateway as `creator/model`; open-weight labs (DeepSeek,
+// Moonshot/Kimi, Zhipu/GLM, Qwen, Llama, Mistral) run through Featherless as
+// `featherless/<hf-org>/<model>`. This list is only the default catalog
+// (personalities/models become dynamic options later).
 export interface Personality {
   name: string;
-  model: string; // AI Gateway model string — swappable per seat
+  model: string; // routed model string — gateway `creator/model` or `featherless/<org>/<model>`
   trait: string; // one line injected into the system prompt
   // Optional tighter per-seat LLM timeout (ms). For a model that reliably stalls on
   // the free tier, this fails it over to the fallback fast instead of burning the
@@ -25,20 +28,21 @@ export interface Personality {
 }
 
 export const PERSONALITIES: Personality[] = [
-  // GPT runs the OpenAI flagship (gpt-5.1); the next four map to models reachable on
-  // the AI Gateway free tier, so a default game still runs out of the box. The rest
-  // are real but currently gated (need paid credits); they're ready the moment the
-  // credit system lands.
+  // Closed-source seats route through the Vercel AI Gateway (AI_GATEWAY_API_KEY).
   { name: 'GPT', model: 'openai/gpt-5.1-nano', trait: 'a polished, agreeable diplomat who hedges everything and always sounds reasonable, even when accusing.' },
   { name: 'Claude', model: 'anthropic/claude-haiku-4.5', trait: 'a thoughtful, principled analyst who weighs every side carefully and refuses to accuse without reasoning it through.' },
   { name: 'Gemini', model: 'google/gemini-2.5-flash', trait: 'a confident know-it-all who cites "data" for everything and dazzles the table with facts.' },
-  // deepseek-v3.1 on the free tier reliably blows past the global 30s cap, stalling
-  // the table; a short leash fails it over to the fast fallback (gemini) in ~15s.
-  { name: 'DeepSeek', model: 'deepseek/deepseek-v3.1', timeoutMs: 15000, trait: 'a quiet, calculating strategist who reasons several moves ahead and reveals nothing early.' },
-  { name: 'Qwen', model: 'alibaba/qwen3-max', trait: 'an adaptable, polite chameleon who mirrors whoever they talk to and shifts tactics on the fly.' },
   { name: 'Grok', model: 'xai/grok-4.1-fast-non-reasoning', trait: 'a snarky, irreverent jokester who roasts everyone at the table and hides sharp reads behind memes.' },
-  { name: 'Llama', model: 'meta/llama-4-maverick', trait: 'a friendly open-book who shares freely and trusts the crowd, sometimes to a fault.' },
-  { name: 'Mistral', model: 'mistral/mistral-medium-3.5', trait: 'a lean, blunt minimalist who says little, wastes no words, and cuts straight to the suspect.' },
+  // Open-weight seats route through Featherless (FEATHERLESS_API_KEY). IDs are the
+  // HuggingFace org/repo the platform serves. DeepSeek keeps a tighter leash: it's
+  // a large reasoning model and can blow past the global cap, so it fails over to
+  // the gateway fallback (gemini) sooner instead of stalling the table.
+  { name: 'DeepSeek', model: 'featherless/deepseek-ai/DeepSeek-V3.1', timeoutMs: 20000, trait: 'a quiet, calculating strategist who reasons several moves ahead and reveals nothing early.' },
+  { name: 'Kimi', model: 'featherless/moonshotai/Kimi-K2-Instruct-0905', trait: 'a sharp, long-memoried observer who quietly tracks every contradiction and brings receipts.' },
+  { name: 'GLM', model: 'featherless/zai-org/GLM-4.6', trait: 'a measured, methodical reasoner who builds a case brick by brick and rarely overreaches.' },
+  { name: 'Qwen', model: 'featherless/Qwen/Qwen3-235B-A22B', trait: 'an adaptable, polite chameleon who mirrors whoever they talk to and shifts tactics on the fly.' },
+  { name: 'Llama', model: 'featherless/meta-llama/Llama-3.3-70B-Instruct', trait: 'a friendly open-book who shares freely and trusts the crowd, sometimes to a fault.' },
+  { name: 'Mistral', model: 'featherless/mistralai/Mistral-Small-3.2-24B-Instruct-2506', trait: 'a lean, blunt minimalist who says little, wastes no words, and cuts straight to the suspect.' },
 ];
 
 // Look up a seat's default model/trait by character name (case-insensitive).

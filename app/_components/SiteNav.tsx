@@ -28,7 +28,14 @@ export function SiteNav() {
   };
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
+    const onScroll = () => {
+      // Only flip state when the threshold is actually crossed, so scrolling
+      // doesn't re-render the nav on every frame.
+      setScrolled((prev) => {
+        const next = window.scrollY > 8;
+        return prev === next ? prev : next;
+      });
+    };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);

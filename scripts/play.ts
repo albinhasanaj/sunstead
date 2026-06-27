@@ -19,6 +19,13 @@ async function main() {
     );
     process.exit(1);
   }
+  if (!process.env.FEATHERLESS_API_KEY) {
+    // Non-fatal: open-weight seats (DeepSeek, Kimi, GLM, Qwen, Llama, Mistral) route
+    // through Featherless. Without the key they'll fail over to the gateway fallback.
+    console.warn(
+      '⚠  FEATHERLESS_API_KEY is not set — open-source seats will fall back to the gateway model. Add it to .env.local (featherless.ai → API keys).\n',
+    );
+  }
 
   const names = process.argv.slice(2);
   console.log(
@@ -30,7 +37,7 @@ async function main() {
   const winner = await runGame(mafiaGame, names, bus.emit, (state) => {
     // Bind the terminal renderer now that players (and their names) exist.
     bus.on(terminalRenderer(state));
-    console.log(`Memory game id (Aiven pgvector): ${state.meta.gameId}`);
+    console.log(`Memory game id (pgvector): ${state.meta.gameId}`);
     console.log('Secret roster (you wouldn\'t normally see this):');
     for (const p of state.players) {
       console.log(`  ${p.name.padEnd(10)} ${String(p.role).padEnd(9)} ${p.private.model}`);

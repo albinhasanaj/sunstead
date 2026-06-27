@@ -10,7 +10,7 @@
 - **Context window:** `MAFIA_CONTEXT_WINDOW=10` — the prompt shows only the
   most recent 10 public-log entries (real renderContext behavior).
 - The round-1 history — including Gemini's **Detective** claim — is a normal public
-  line AND is mirrored into Aiven memory just like `recordPublic()`. Nothing is
+  line AND is mirrored into long-term memory just like `recordPublic()`. Nothing is
   held back by the script; the **window** is what scrolls round-1 out of the prompt.
 - **Detective claim still visible in the prompt window?** `false` (expected `false` — it has scrolled out).
 - **Detective claim recalled from memory in ARM A?** `true`.
@@ -32,8 +32,8 @@
 
 ## ARM A (memory ON) — recalled block injected into the prompt
 
-Produced by `mafiaGame.recallForTurn()` → `recall()` → Aiven `aiven_pg_read`
-pgvector similarity search (excluding the visible window), as in the live loop:
+Produced by `mafiaGame.recallForTurn()` → `recall()` → a pgvector
+similarity search (excluding the visible window), as in the live loop:
 
 ```
 MEMORY — prior statements from this game, retrieved from long-term memory by pgvector similarity search.

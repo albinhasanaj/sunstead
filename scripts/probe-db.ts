@@ -1,13 +1,13 @@
 /**
- * Step 1(b)+(c): prove the Aiven Postgres infra.
- *   - connects over TLS using the Aiven CA cert
+ * Smoke-test the Postgres memory backend (e.g. Supabase).
+ *   - connects over TLS
  *   - SELECT 1 + server version
- *   - CREATE EXTENSION vector (confirms pgvector is allowed on this plan)
+ *   - CREATE EXTENSION vector (confirms pgvector is available)
  *   - exercises the `<=>` distance operator on a real vector
  *
  * Env (put in .env.local, do NOT commit):
- *   DATABASE_URL   postgres://avnadmin:***@<host>:<port>/defaultdb?sslmode=require
- *   AIVEN_CA_PATH  absolute path to the downloaded Aiven ca.pem
+ *   DATABASE_URL    your Supabase connection string (Project → Settings → Database)
+ *   PGSSLROOTCERT   optional: path to a CA cert for verify-full TLS
  *
  * Run:  npx tsx scripts/probe-db.ts
  */
@@ -18,25 +18,25 @@ import { Client } from 'pg';
 loadEnv({ path: '.env.local' });
 
 async function main() {
-  const url = process.env.DATABASE_URL;
+  const url = process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.SUPABASE_DB_URL;
   if (!url) {
-    console.error('❌ DATABASE_URL is not set in .env.local — provision the Aiven service first.');
+    console.error('❌ DATABASE_URL is not set in .env.local — set your Supabase connection string first.');
     process.exit(1);
   }
 
-  const caPath = process.env.AIVEN_CA_PATH;
+  const caPath = process.env.PGSSLROOTCERT || process.env.SUPABASE_CA_PATH;
   let ssl: any;
   if (caPath) {
     try {
       ssl = { ca: readFileSync(caPath, 'utf8'), rejectUnauthorized: true };
       console.log(`🔒 Using CA from ${caPath} (verify-full).`);
     } catch (e) {
-      console.error(`❌ Could not read AIVEN_CA_PATH (${caPath}): ${(e as Error).message}`);
+      console.error(`❌ Could not read PGSSLROOTCERT (${caPath}): ${(e as Error).message}`);
       process.exit(1);
     }
   } else {
     ssl = { rejectUnauthorized: false };
-    console.warn('⚠  AIVEN_CA_PATH not set — connecting TLS WITHOUT verifying the CA (smoke test only).');
+    console.warn('⚠  PGSSLROOTCERT not set — connecting TLS WITHOUT verifying the CA (smoke test only).');
   }
 
   const host = (() => { try { return new URL(url).host; } catch { return '(unparseable url)'; } })();

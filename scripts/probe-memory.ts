@@ -1,7 +1,7 @@
 /**
- * Deterministic proof of the memory hot path (Aiven MCP + pgvector), no LLM game.
+ * Deterministic proof of the memory hot path (Postgres + pgvector), no LLM game.
  * Plants a role-claim contradiction across rounds, then recalls it by similarity.
- * Run: npx tsx scripts/probe-memory.ts
+ * Needs DATABASE_URL set in .env.local. Run: npx tsx scripts/probe-memory.ts
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';

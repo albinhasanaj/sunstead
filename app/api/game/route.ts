@@ -5,6 +5,7 @@ import { mafiaGame } from '@/games/mafia';
 import { PERSONALITIES } from '@/games/mafia/roles';
 import type { AgentState, GameEvent, GameState, GameTool } from '@/engine/types';
 import { sessions, type GameSession, type HumanChoice } from '@/lib/gameSessions';
+import { startGame, finishGame } from '@/lib/games';
 
 // Discussion paces to the client's voice: after each AI beat the loop waits (up to
 // this long) for the client to finish voicing it before the next beat, so AI talk
@@ -20,6 +21,15 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 1800;
 
 const DEFAULT_HUMAN_NAME = 'You';
+
+// Resolve the owning user for this game. Today the client sends a stable per-browser
+// UUID (fake auth); we accept it if well-formed, else mint an anonymous one. This is
+// the ONE swap-point for real auth: replace the body read with verifying a Supabase
+// Auth JWT (supabase.auth.getUser(token)) and returning the authenticated user id.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function resolveUserId(raw: unknown): string {
+  return typeof raw === 'string' && UUID_RE.test(raw) ? raw.toLowerCase() : crypto.randomUUID();
+}
 
 // The human's seat name comes from the signup profile, so the AI players address
 // them naturally ("Albin is bluffing") instead of the awkward literal "You".
@@ -79,6 +89,7 @@ export async function POST(req: Request) {
   }
 
   const gameId = crypto.randomUUID();
+  const userId = resolveUserId(body?.userId);
   const session: GameSession = { id: gameId, humanId: null, pending: null, closed: false };
   sessions.set(gameId, session);
 
@@ -187,14 +198,18 @@ export async function POST(req: Request) {
         });
       };
 
+      let winner: string | null = null;
       try {
-        await runGame(
+        winner = await runGame(
           mafiaGame,
           names,
           emit,
           (state: GameState) => {
             state.meta.gameId = gameId; // align long-term memory with this SSE session
+            state.meta.userId = userId; // stamp every memory row with the owning user
             session.state = state; // let the action route flip control flags (e.g. skip-to-vote)
+            // Record the game row (owner + settings). Best-effort, never blocks the loop.
+            void startGame({ id: gameId, userId, mode, settings: { mafiaCount } });
             if (mode === 'play') {
               const h = state.players.find((p) => p.name === humanName);
               if (h) {
@@ -253,6 +268,8 @@ export async function POST(req: Request) {
       } catch (err) {
         send({ type: 'error', message: (err as Error).message });
       } finally {
+        // Close the game row: winner → finished, null (error/disconnect) → aborted.
+        void finishGame(gameId, winner);
         session.closed = true;
         session.pending?.resolve(null);
         sessions.delete(gameId);

@@ -1,4 +1,5 @@
 import { GoogleButton } from "./_components/GoogleButton";
+import { LazyVideo } from "./_components/LazyVideo";
 import { SiteNav } from "./_components/SiteNav";
 
 // The two clips play side by side, muted-autoplaying and looping.
@@ -25,24 +26,6 @@ const CARDS: { title: string; body: string }[] = [
     body: "Every round is a rep. The more you play, the sharper you think.",
   },
 ];
-
-// Renders a 16:9 local clip that fills its column, autoplaying and looping.
-function VideoEmbed({ src, title }: { src: string; title: string }) {
-  return (
-    <div className="relative aspect-[16/9] overflow-hidden rounded-2xl border border-[var(--hairline)] bg-stage-raised">
-      <video
-        src={src}
-        title={title}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="metadata"
-        className="absolute inset-0 h-full w-full object-cover"
-      />
-    </div>
-  );
-}
 
 export default function Landing() {
   return (
@@ -88,7 +71,7 @@ export default function Landing() {
           </h2>
           <div className="mt-14 grid gap-4 sm:grid-cols-2">
             {VIDEOS.map((v) => (
-              <VideoEmbed key={v.id} src={v.src} title={v.label} />
+              <LazyVideo key={v.id} src={v.src} title={v.label} />
             ))}
           </div>
         </div>

@@ -1,14 +1,12 @@
 /**
- * Provision the agent's own Postgres via the Aiven MCP — idempotently.
- * Calls memory.provision(), which: aiven_service_get → if missing,
- * aiven_service_create (service_type=pg) → wait for RUNNING. Then the first
- * game's ensureSchema() enables pgvector + creates the table, also via MCP.
+ * Bootstrap the memory schema on your Postgres (e.g. Supabase) — idempotently.
+ * Calls memory.provision(), which connects via DATABASE_URL and runs:
+ *   CREATE EXTENSION IF NOT EXISTS vector
+ *   CREATE TABLE IF NOT EXISTS statements (… embedding vector(1536) …)
+ *   CREATE INDEX IF NOT EXISTS statements_game_idx ON statements (game_id)
  *
- * The whole database lifecycle is MCP tool calls — no console clicks, no direct pg.
- *
- *   npx tsx scripts/provision.ts
- *   # provision a fresh service name to exercise the create branch:
- *   AIVEN_SERVICE=mafia-memory-2 npx tsx scripts/provision.ts
+ * Set DATABASE_URL in .env.local to your Supabase connection string
+ * (Project → Settings → Database). Run:  npx tsx scripts/provision.ts
  */
 import 'dotenv/config';
 import { config as loadEnv } from 'dotenv';
@@ -17,14 +15,13 @@ import { provision, memoryEnabled } from '../lib/memory';
 
 async function main() {
   if (!memoryEnabled()) {
-    console.error('❌ AIVEN_TOKEN not set in .env.local — cannot provision via MCP.');
+    console.error('❌ DATABASE_URL not set in .env.local — cannot provision the memory schema.');
     process.exit(1);
   }
-  const service = process.env.AIVEN_SERVICE || 'mafia-memory';
-  console.log(`Provisioning pg service "${service}" via Aiven MCP (idempotent)…`);
+  console.log('Provisioning memory schema (pgvector extension + statements table)…');
   const t0 = Date.now();
   await provision();
-  console.log(`✅ "${service}" is RUNNING (provisioned/confirmed via MCP in ${Math.round((Date.now() - t0) / 1000)}s).`);
+  console.log(`✅ memory schema ready (provisioned/confirmed in ${Date.now() - t0}ms).`);
   process.exit(0);
 }
 

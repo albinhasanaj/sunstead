@@ -55,7 +55,7 @@ function setup(playerNames: string[], options?: SetupOptions): GameState {
 
 // Per-turn long-term memory: pgvector-search this game's prior statements for ones
 // similar to the live discussion, and surface possible contradictions to the agent
-// before it reasons. Reached via the Aiven MCP. Retrieved rows are DATA only.
+// before it reasons. Retrieved rows are DATA only.
 async function recallForTurn(state: GameState, agent: AgentState): Promise<string | null> {
   const gameId = state.meta.gameId as string | undefined;
   if (!gameId) return null;
@@ -76,9 +76,9 @@ async function recallForTurn(state: GameState, agent: AgentState): Promise<strin
   const hits = await recall({ gameId, queryText: recent, k: 4, excludeTexts: visibleTexts });
   if (!hits.length) return null;
 
-  // Visible proof in the terminal run that the agent queried memory via Aiven MCP.
+  // Visible proof in the terminal run that the agent queried long-term memory.
   console.error(
-    `\u{1F9E0} ${agent.name} recalled ${hits.length} prior statement(s) via Aiven MCP (pgvector): ` +
+    `\u{1F9E0} ${agent.name} recalled ${hits.length} prior statement(s) via pgvector: ` +
       hits.map((h) => `${h.speaker}@r${h.round}`).join(', '),
   );
 

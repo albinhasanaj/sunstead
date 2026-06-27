@@ -208,7 +208,7 @@ body {
   width: 24vw;
   background-size: cover;
   background-position: center;
-  will-change: transform, background-position;
+  will-change: transform;
 }
 .side-grad-left {
   left: 0;
@@ -225,27 +225,37 @@ body {
   animation: grad-drift-r 14s ease-in-out infinite;
 }
 
+/* Transform-only drift so it stays on the GPU compositor (no per-frame
+   repaint of the underlying image). */
 @keyframes grad-drift-l {
   0%,
   100% {
-    transform: scale(1.04);
-    background-position: 28% 50%;
+    transform: scale(1.04) translate3d(0, 0, 0);
   }
   50% {
-    transform: scale(1.12);
-    background-position: 58% 38%;
+    transform: scale(1.12) translate3d(4%, -6%, 0);
   }
 }
 
 @keyframes grad-drift-r {
   0%,
   100% {
-    transform: scale(1.06);
-    background-position: 72% 50%;
+    transform: scale(1.06) translate3d(0, 0, 0);
   }
   50% {
-    transform: scale(1.14);
-    background-position: 42% 62%;
+    transform: scale(1.14) translate3d(-4%, 6%, 0);
+  }
+}
+
+/* Respect users who ask for less motion: drop the looping background
+   animations that otherwise run forever. */
+@media (prefers-reduced-motion: reduce) {
+  .side-grad-left,
+  .side-grad-right,
+  .marquee-track,
+  .breathe,
+  .live-dot {
+    animation: none;
   }
 }
 

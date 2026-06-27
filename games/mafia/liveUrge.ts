@@ -1,5 +1,6 @@
 import { generateText } from 'ai';
 import type { AgentState, GameState, PlayerId } from '../../engine/types';
+import { resolveModel } from '../../engine/models';
 
 // Paid-tier "hand-raise" (gated behind MAFIA_LIVE_URGE=1). Instead of PREDICTING a
 // seat's urge from its last on-deck bid, each silent seat rates — on ITS OWN model —
@@ -31,7 +32,7 @@ async function rate(state: GameState, p: AgentState, transcript: string): Promis
   const model = (p.private.model as string) ?? FALLBACK_MODEL;
   try {
     const r = await generateText({
-      model,
+      model: resolveModel(model),
       system:
         `You are ${p.name}, a player in a game of Mafia. Read the latest table talk and decide how badly you ` +
         `want to speak RIGHT NOW. Reply with ONE digit 0-9 only — 9 = you must jump in, 0 = you have nothing to add.`,
