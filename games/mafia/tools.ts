@@ -120,7 +120,18 @@ const accuse: GameTool = {
   legalIn: inPhase(PHASE.DISCUSSION),
   execute: async (args, ctx) => {
     const t = resolve(ctx.state, args.target, { aliveOnly: true });
-    if (!t) return `No living player named "${args.target}".`;
+    // A fumbled target — yourself, or a name that doesn't resolve — must NEVER print
+    // the hardcoded "I think X is Mafia" line. That's exactly how a cleared player
+    // ends up "accusing" itself. Degrade to voicing the reasoning as a normal line
+    // so the turn still produces real speech instead of an absurd self-accusation.
+    if (!t || t.id === ctx.agent.id) {
+      const line = (args.reason ?? '').trim();
+      if (!line) return 'No valid player to accuse — skip the accusation and speak instead.';
+      ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
+      ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
+      await recordPublic(ctx, 'speak', line);
+      return 'You spoke (no valid accusation target). Your turn is over.';
+    }
     const line = `I think ${t.name} is Mafia. ${args.reason}`;
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
@@ -179,6 +190,8 @@ const vote: GameTool = {
   execute: async (args, ctx) => {
     const t = resolve(ctx.state, args.target, { aliveOnly: true });
     if (!t) return `No living player named "${args.target}".`;
+    // Don't let a fumbled argument make a seat vote to eliminate ITSELF.
+    if (t.id === ctx.agent.id) return `You can't vote for yourself — choose a different living player.`;
     ctx.state.meta.votes = ctx.state.meta.votes ?? {};
     ctx.state.meta.votes[ctx.agent.id] = t.id;
     // Publish the vote to the Kafka votes topic via MCP; the tally consumes it back.
