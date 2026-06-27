@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVoiceQueue } from './useVoiceQueue';
 import { useAuth } from '../../_components/AuthProvider';
-import { PHASE_SECS } from './constants';
+import { PHASE_SECS, MAFIA_CHANCE_START, MAFIA_CHANCE_STEP, MAFIA_CHANCE_KEY } from './constants';
 import type { Announce, Feed, Player, Turn } from './types';
 
 export function useMafiaGame() {
@@ -65,6 +65,20 @@ export function useMafiaGame() {
   // spectator vantage (same POV as watch-the-agents) for the rest of the round.
   const [spectating, setSpectating] = useState(false);
   const deathTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Personal "pity" odds of drawing Mafia (play mode). Persisted per-browser: it
+  // climbs each game you're not Mafia and resets the game you are. We keep a ref in
+  // lockstep so `start` can read the live value without re-creating the callback.
+  const [mafiaChance, setMafiaChance] = useState<number>(MAFIA_CHANCE_START);
+  const mafiaChanceRef = useRef(MAFIA_CHANCE_START);
+  mafiaChanceRef.current = mafiaChance;
+  useEffect(() => {
+    try {
+      const stored = Number(localStorage.getItem(MAFIA_CHANCE_KEY));
+      if (Number.isFinite(stored) && stored >= 0) setMafiaChance(Math.min(100, stored));
+    } catch {
+      /* localStorage unavailable — start from the default */
+    }
+  }, []);
 
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
@@ -161,14 +175,28 @@ export function useMafiaGame() {
           setMode(e.mode);
           setHumanId(e.humanId);
           break;
-        case 'setup':
+        case 'setup': {
           setPlayers(e.players.map((p: Player) => ({ ...p, alive: true })));
           setPhase({ phase: e.phase, round: e.round });
           // Only auto-select the human (for the minds panel); in watch mode leave
           // nothing selected so the scene's heads follow the speaker rather than
           // locking onto a default "accused" player.
-          setSelected((s) => s ?? e.players.find((p: Player) => p.human)?.id ?? null);
+          const meSeat = e.players.find((p: Player) => p.human);
+          setSelected((s) => s ?? meSeat?.id ?? null);
+          // Pity timer (play mode only): now that this game's role is sealed, reset
+          // the odds if you drew Mafia, otherwise nudge them up for next time.
+          if (meSeat) {
+            const next = meSeat.role === 'mafia' ? MAFIA_CHANCE_START : Math.min(100, mafiaChanceRef.current + MAFIA_CHANCE_STEP);
+            mafiaChanceRef.current = next;
+            setMafiaChance(next);
+            try {
+              localStorage.setItem(MAFIA_CHANCE_KEY, String(next));
+            } catch {
+              /* localStorage unavailable — keep the in-memory value */
+            }
+          }
           break;
+        }
         case 'phase': {
           voice.reset(); // drop any leftover spoken backlog before the phase turns over
           setPhase({ phase: e.phase, round: e.round });
@@ -343,6 +371,7 @@ export function useMafiaGame() {
             ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),
             ...(devRoleArg ? { devRole: devRoleArg } : {}),
             ...(mafiaCount ? { mafiaCount } : {}),
+            ...(m === 'play' ? { mafiaChance: mafiaChanceRef.current } : {}),
           }),
           signal: ac.signal,
         });
@@ -617,6 +646,7 @@ export function useMafiaGame() {
     spectating,
     spectate,
     suicide,
+    mafiaChance,
     // derived view-model
     me,
     myRole,

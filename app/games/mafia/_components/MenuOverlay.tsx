@@ -8,6 +8,7 @@ export default function MenuOverlay({
   setDevRole,
   mafiaCount,
   setMafiaCount,
+  mafiaChance,
   onPlay,
   onWatch,
 }: {
@@ -16,6 +17,7 @@ export default function MenuOverlay({
   setDevRole: (role: string) => void;
   mafiaCount: number;
   setMafiaCount: (n: number) => void;
+  mafiaChance: number;
   onPlay: () => void;
   onWatch: () => void;
 }) {
@@ -55,6 +57,12 @@ export default function MenuOverlay({
             </button>
           ))}
         </div>
+        {/* Pity odds: your personal chance of drawing Mafia when you take a seat —
+            it climbs every game you don't, and resets the game you do. */}
+        <p className="mt-1 text-[11px] tracking-wide text-neutral-500">
+          Your odds of drawing <span className="font-semibold text-red-300/80">Mafia</span>:{' '}
+          <span className="tabular-nums text-neutral-300">{mafiaChance}%</span>
+        </p>
       </div>
 
       <div className="mt-8 flex flex-col items-center gap-3">

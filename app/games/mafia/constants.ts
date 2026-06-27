@@ -14,6 +14,13 @@ export const ROLE_STYLE: Record<string, string> = {
   unknown: 'border-neutral-700 text-neutral-500',
 };
 
+// Personal "pity" odds of drawing Mafia in play mode. Starts low and climbs each
+// game you AREN'T Mafia, then resets the game you finally are — so a long run of
+// town is eventually rewarded with a Mafia seat. Persisted per-browser (localStorage).
+export const MAFIA_CHANCE_START = 0; // % — the odds on a fresh start / right after a Mafia game
+export const MAFIA_CHANCE_STEP = 10; // % added per non-Mafia game (clamped to 100)
+export const MAFIA_CHANCE_KEY = 'mafia:roleChance';
+
 // Shared style for the floating top-right controls (same look as the Transcript button).
 export const FLOAT_BTN =
   'flex items-center gap-1.5 rounded-lg border border-neutral-700/70 bg-neutral-950/70 px-3 py-1.5 text-xs text-neutral-300 backdrop-blur transition hover:bg-neutral-800/80 hover:text-neutral-100';

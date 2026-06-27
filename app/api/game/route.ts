@@ -53,6 +53,13 @@ export async function POST(req: Request) {
       ? (body.devRole as string)
       : null;
 
+  // Personal "pity" odds (%) that the human draws Mafia this game, sent by the
+  // client (which climbs them each non-Mafia game and resets after a Mafia one). We
+  // bias the human's seat toward/away from Mafia by this chance while keeping the
+  // overall role counts intact. A dev role override takes precedence over this.
+  const mafiaChance =
+    mode === 'play' && Number.isFinite(Number(body?.mafiaChance)) ? Math.min(100, Math.max(0, Number(body.mafiaChance))) : null;
+
   // Lobby setting: how many Mafia at the table (1–3, default 1). Town stays fixed at
   // 5 seats, so the table grows to 6–8 players and Mafia is always a strict minority.
   const mafiaCount = Math.min(3, Math.max(1, Math.round(Number(body?.mafiaCount)) || 1));
@@ -198,6 +205,23 @@ export async function POST(req: Request) {
                   const other = state.players.find((p) => p.id !== h.id && p.role === devRole);
                   if (other) other.role = h.role;
                   h.role = devRole;
+                } else if (!devRole && mafiaChance != null) {
+                  // Pity roll: swap the human into / out of a Mafia seat to match the
+                  // requested odds, trading roles with another player so counts hold.
+                  const wantMafia = Math.random() * 100 < mafiaChance;
+                  if (wantMafia && h.role !== 'mafia') {
+                    const other = state.players.find((p) => p.id !== h.id && p.role === 'mafia');
+                    if (other) {
+                      other.role = h.role;
+                      h.role = 'mafia';
+                    }
+                  } else if (!wantMafia && h.role === 'mafia') {
+                    const other = state.players.find((p) => p.id !== h.id && p.role !== 'mafia');
+                    if (other) {
+                      h.role = other.role;
+                      other.role = 'mafia';
+                    }
+                  }
                 }
                 h.private.human = true;
                 humanId = h.id;

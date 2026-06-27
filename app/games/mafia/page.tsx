@@ -66,6 +66,7 @@ export default function Home() {
     deathReady,
     spectating,
     spectate,
+    mafiaChance,
     me,
     myRole,
     myTurn,
@@ -261,6 +262,7 @@ export default function Home() {
           setDevRole={setDevRole}
           mafiaCount={mafiaCount}
           setMafiaCount={setMafiaCount}
+          mafiaChance={mafiaChance}
           onPlay={() => {
             setIntro('play');
             start('play', devRole, mafiaCount);
