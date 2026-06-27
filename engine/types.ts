@@ -42,10 +42,16 @@ export interface ToolContext {
 
 export type Emit = (e: GameEvent) => void;
 
+// Optional knobs the host passes into setup to tune a single game (e.g. the chosen
+// Mafia count from the lobby). Games may ignore fields they don't use.
+export interface SetupOptions {
+  mafiaCount?: number;
+}
+
 // The plug-in object. Mafia returns one of these. Werewolf would return another.
 export interface GameDefinition {
   id: string;
-  setup: (playerNames: string[]) => GameState; // assign roles, init state
+  setup: (playerNames: string[], options?: SetupOptions) => GameState; // assign roles, init state
   phases: string[];
   // For a given phase, who acts and in what order (may repeat a player for
   // multi-round phases like discussion):

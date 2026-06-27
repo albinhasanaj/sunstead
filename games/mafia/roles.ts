@@ -58,8 +58,13 @@ export const FALLBACK_MODEL = 'google/gemini-2.5-flash';
 // the game, and so a full table shows off every role (Mafia coord + Detective + Doctor).
 //   n≥5 → a Detective (town gains information)
 //   n≥6 → a Doctor (town gains protection)
-export function roleDistribution(n: number): string[] {
-  const mafiaCount = n <= 5 ? 1 : n <= 8 ? 2 : 3;
+// `mafiaOverride` lets the lobby pick the Mafia count (1–3); it's clamped to keep
+// Mafia a strict minority (mafia < town) so the game can't open already-decided.
+export function roleDistribution(n: number, mafiaOverride?: number): string[] {
+  const mafiaCount =
+    mafiaOverride != null
+      ? Math.max(1, Math.min(Math.round(mafiaOverride), Math.floor((n - 1) / 2)))
+      : n <= 5 ? 1 : n <= 8 ? 2 : 3;
   const detectives = n >= 5 ? 1 : 0;
   const doctors = n >= 6 ? 1 : 0;
   const roles: string[] = [];

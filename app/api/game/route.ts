@@ -2,6 +2,7 @@ import { runGame, type TurnFn } from '@/engine/orchestrator';
 import { humanTurn, type HumanController } from '@/engine/human';
 import { takeTurn } from '@/engine/agent';
 import { mafiaGame } from '@/games/mafia';
+import { PERSONALITIES } from '@/games/mafia/roles';
 import type { AgentState, GameEvent, GameState, GameTool } from '@/engine/types';
 import { sessions, type GameSession, type HumanChoice } from '@/lib/gameSessions';
 
@@ -52,12 +53,22 @@ export async function POST(req: Request) {
       ? (body.devRole as string)
       : null;
 
-  // Roster. In play mode we seat the human alongside four AI players. Drop any AI
-  // whose name collides with the human's so the seat name stays unique.
+  // Lobby setting: how many Mafia at the table (1–3, default 1). Town stays fixed at
+  // 5 seats, so the table grows to 6–8 players and Mafia is always a strict minority.
+  const mafiaCount = Math.min(3, Math.max(1, Math.round(Number(body?.mafiaCount)) || 1));
+  const TOWN_SEATS = 5;
+  const totalSeats = mafiaCount + TOWN_SEATS;
+
+  // Roster. PERSONALITIES holds 8 named seats — enough for a full 5-town + 3-Mafia
+  // table. In play mode we seat the human alongside the AI players; drop any AI whose
+  // name collides with the human's so the seat name stays unique.
+  const AI_POOL = PERSONALITIES.map((p) => p.name);
   let names: string[] = Array.isArray(body?.names) && body.names.length ? body.names : [];
   if (mode === 'play') {
-    const ai = (names.length ? names : ['GPT', 'Claude', 'Gemini', 'DeepSeek', 'Qwen']).filter((n) => n !== humanName);
-    names = [...ai.slice(0, 5), humanName];
+    const ai = (names.length ? names : AI_POOL).filter((n) => n !== humanName);
+    names = [...ai.slice(0, totalSeats - 1), humanName];
+  } else {
+    names = (names.length ? names : AI_POOL).slice(0, totalSeats);
   }
 
   const gameId = crypto.randomUUID();
@@ -213,6 +224,7 @@ export async function POST(req: Request) {
           turnFn,
           turnDelayMs,
           beatHook,
+          { mafiaCount },
         );
       } catch (err) {
         send({ type: 'error', message: (err as Error).message });

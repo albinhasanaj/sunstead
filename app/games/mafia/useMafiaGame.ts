@@ -293,7 +293,7 @@ export function useMafiaGame() {
   );
 
   const start = useCallback(
-    async (m: 'watch' | 'play', devRoleArg?: string) => {
+    async (m: 'watch' | 'play', devRoleArg?: string, mafiaCount?: number) => {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
@@ -342,6 +342,7 @@ export function useMafiaGame() {
             mode: m,
             ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),
             ...(devRoleArg ? { devRole: devRoleArg } : {}),
+            ...(mafiaCount ? { mafiaCount } : {}),
           }),
           signal: ac.signal,
         });

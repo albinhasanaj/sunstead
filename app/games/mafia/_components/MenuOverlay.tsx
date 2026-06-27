@@ -6,12 +6,16 @@ export default function MenuOverlay({
   winner,
   devRole,
   setDevRole,
+  mafiaCount,
+  setMafiaCount,
   onPlay,
   onWatch,
 }: {
   winner: string | null;
   devRole: string;
   setDevRole: (role: string) => void;
+  mafiaCount: number;
+  setMafiaCount: (n: number) => void;
   onPlay: () => void;
   onWatch: () => void;
 }) {
@@ -32,7 +36,28 @@ export default function MenuOverlay({
         </p>
       )}
 
-      <div className="mt-10 flex flex-col items-center gap-3">
+      {/* Table setting — how many Mafia are seated (1–3). The table grows to keep
+          Mafia a minority, so this is purely "how outnumbered is the town?". */}
+      <div className="mt-9 flex flex-col items-center gap-2.5">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.35em] text-neutral-500">Mafia at the table</span>
+        <div className="flex items-center gap-1.5 rounded-full border border-neutral-700/70 bg-neutral-950/60 p-1 backdrop-blur">
+          {[1, 2, 3].map((n) => (
+            <button
+              key={n}
+              onClick={() => setMafiaCount(n)}
+              className={`h-8 w-10 rounded-full text-sm font-semibold tabular-nums transition ${
+                mafiaCount === n
+                  ? 'bg-red-500/20 text-red-200 ring-1 ring-inset ring-red-500/40'
+                  : 'text-neutral-400 hover:text-neutral-200'
+              }`}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-8 flex flex-col items-center gap-3">
         <button onClick={onPlay} className="tribunal-action tribunal-action--join min-w-[240px] text-center">
           {winner ? 'Play again' : 'Join the table'}
         </button>

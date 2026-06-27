@@ -1,4 +1,4 @@
-import type { AgentState, GameDefinition, GameState } from '../../engine/types';
+import type { AgentState, GameDefinition, GameState, SetupOptions } from '../../engine/types';
 import { recall } from '../../lib/memory';
 import { DEFAULT_ROSTER, FALLBACK_MODEL, personalityByName, roleDistribution, ROLE, isMafia } from './roles';
 import { PHASE, PHASES, turnOrder, advancePhase, nextSpeaker } from './phases';
@@ -15,7 +15,7 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function setup(playerNames: string[]): GameState {
+function setup(playerNames: string[], options?: SetupOptions): GameState {
   // Names → seats. Each known character carries its own model + trait; an unknown
   // custom name falls back to the default model and a neutral trait. With no names,
   // use the default roster (the seats reachable on the free tier today).
@@ -33,7 +33,7 @@ function setup(playerNames: string[]): GameState {
     };
   });
 
-  const roles = shuffle(roleDistribution(seats.length));
+  const roles = shuffle(roleDistribution(seats.length, options?.mafiaCount));
 
   const players: AgentState[] = seats.map((p, i) => ({
     id: `p${i + 1}`,

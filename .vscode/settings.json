@@ -1,0 +1,40 @@
+{
+  // Stop VSCode's file watcher from churning on large, machine-generated dirs.
+  // This is the main fix for the freeze-on-window-focus: the watcher no longer
+  // re-syncs the 1.7GB .next turbopack cache (which rewrites constantly during `next dev`).
+  "files.watcherExclude": {
+    "**/.next/**": true,
+    "**/node_modules/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/out/**": true,
+    "**/build/**": true,
+    "**/coverage/**": true,
+    "**/.turbo/**": true,
+    "**/*.tsbuildinfo": true
+  },
+
+  // Keep search results (and indexing) focused on source code.
+  "search.exclude": {
+    "**/.next": true,
+    "**/node_modules": true,
+    "**/out": true,
+    "**/build": true,
+    "**/coverage": true,
+    "**/.turbo": true,
+    "**/package-lock.json": true,
+    "**/pnpm-lock.yaml": true,
+    "**/*.tsbuildinfo": true
+  },
+
+  // Hide generated artifacts from the explorer so the tree only shows what you edit.
+  "files.exclude": {
+    "**/.next": true,
+    "**/out": true,
+    "**/build": true,
+    "**/coverage": true,
+    "**/.turbo": true,
+    "**/*.tsbuildinfo": true,
+    "**/.DS_Store": true
+  }
+}

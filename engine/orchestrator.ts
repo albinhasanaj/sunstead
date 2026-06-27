@@ -1,5 +1,5 @@
 import { takeTurn } from './agent';
-import type { AgentState, Emit, GameDefinition, GameState } from './types';
+import type { AgentState, Emit, GameDefinition, GameState, SetupOptions } from './types';
 
 // How a single agent's turn is taken. Defaults to the real AI SDK call (takeTurn),
 // but is injectable so tests can drive the loop with a deterministic mock policy
@@ -43,8 +43,10 @@ export async function runGame(
   // route uses it to pace AI talk to the client's voice and to inject a human's
   // real-time interjection between beats. A no-op by default (e.g. tests/headless).
   beatHook?: (state: GameState) => Promise<void>,
+  // Optional per-game setup knobs (e.g. the lobby's chosen Mafia count).
+  setupOptions?: SetupOptions,
 ): Promise<string> {
-  const state = def.setup(names);
+  const state = def.setup(names, setupOptions);
   onState?.(state);
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 

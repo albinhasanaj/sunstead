@@ -25,6 +25,9 @@ export default function Home() {
   const [intro, setIntro] = useState<null | 'play' | 'watch'>(null);
   // Dev-only: force your role for testing (empty = random). Sent to the API.
   const [devRole, setDevRole] = useState('');
+  // Lobby setting: how many Mafia at the table (1–3, default 1). Sent to the API,
+  // which grows the table to keep Mafia a minority (5 town + this many Mafia).
+  const [mafiaCount, setMafiaCount] = useState(1);
   // Watch mode: reveal every agent's secret role (overhead tags + drawer badges).
   // Defaults on so spectators can see who the Mafia is; toggle off for a blind watch.
   const [revealRoles, setRevealRoles] = useState(true);
@@ -256,13 +259,15 @@ export default function Home() {
           winner={winner}
           devRole={devRole}
           setDevRole={setDevRole}
+          mafiaCount={mafiaCount}
+          setMafiaCount={setMafiaCount}
           onPlay={() => {
             setIntro('play');
-            start('play', devRole);
+            start('play', devRole, mafiaCount);
           }}
           onWatch={() => {
             setIntro('watch');
-            start('watch');
+            start('watch', undefined, mafiaCount);
           }}
         />
       )}
