@@ -96,7 +96,7 @@ export default function Home() {
     : pickTurn.legal.includes('investigate')
     ? 'click a face to investigate'
     : pickTurn.legal.includes('protect')
-    ? 'click a face to protect'
+    ? 'click a face to protect — or use “Protect yourself”'
     : pickTurn.legal.includes('vote')
     ? 'click a face to cast your vote'
     : '';

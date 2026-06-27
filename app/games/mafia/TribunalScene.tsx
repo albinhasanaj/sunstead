@@ -1441,7 +1441,17 @@ function ActionOverlay(props: Props) {
   // empty/greyed "pick a target" state. Until then the bottom-center belongs to
   // the voice dock, whose hint line carries the "click a face" guidance.
   const ready = defs.filter((d) => !!accusedId && d.targets.some((tg) => tg.id === accusedId));
-  if (ready.length === 0) return null;
+
+  // Self-protect: you ARE the camera POV, so there's no face of your own to click.
+  // When the doctor may shield themselves this night (self is in protectTargets —
+  // i.e. you didn't shield yourself last night), offer a dedicated button that
+  // doesn't depend on a face pick. Same for any other self-targetable action.
+  const selfProtect =
+    legal.includes('protect') &&
+    props.myId != null &&
+    (turn.protectTargets ?? []).some((tg: { id: string }) => tg.id === props.myId);
+
+  if (ready.length === 0 && !selfProtect) return null;
 
   return (
     <div
@@ -1461,6 +1471,18 @@ function ActionOverlay(props: Props) {
         fontFamily: 'ui-monospace, monospace',
       }}
     >
+      {selfProtect && (
+        <button
+          key="protect-self"
+          onClick={() => onAction('protect', { target: props.myId })}
+          className="tribunal-action"
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9 }}>
+            <Shield size={16} strokeWidth={2.25} />
+            Protect yourself
+          </span>
+        </button>
+      )}
       {ready.map((d) => {
         const Icon = d.Icon;
         return (
