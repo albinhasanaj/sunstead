@@ -28,7 +28,7 @@ const DISCUSSION_ROUNDS = 2;
 // hand-raise, then scores — see ./liveUrge.
 type LogLine = { speaker: PlayerId; text: string };
 // Per-discussion scratch held on state.meta.disc (untyped Record there; typed here).
-type Disc = { round: number; beat: number; budget: number; spoke: Record<PlayerId, number>; last: PlayerId | null };
+type Disc = { round: number; beat: number; budget: number; spoke: Record<PlayerId, number>; last: PlayerId | null; directTo?: PlayerId | null };
 
 export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerId | null> {
   if (state.phase !== PHASE.DISCUSSION) return null;
@@ -44,6 +44,22 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
     meta.humanWantsSkip = false; // fresh discussion → no pending skip request
   }
   const d = meta.disc;
+
+  // Directed reply: the human addressed a specific agent (clicked them; the line was
+  // prefixed with their name). Hand THAT agent the floor for the next beat — one
+  // guaranteed answer — instead of whoever merely scores highest. It clears after
+  // firing, so normal urge-based scheduling resumes and the table still reacts. This
+  // overrides the budget/skip below so a direct question always gets a direct answer.
+  if (d.directTo) {
+    const target = living.find((p) => p.id === d.directTo && !p.private.human);
+    d.directTo = null;
+    if (target && target.id !== d.last) {
+      d.beat += 1;
+      d.spoke[target.id] = (d.spoke[target.id] ?? 0) + 1;
+      d.last = target.id;
+      return target.id;
+    }
+  }
 
   // Consensus skip-to-vote: if the human has asked to move on AND a majority of the
   // living table is ready (the human + every AI that has already said its piece),
@@ -281,6 +297,10 @@ function resolveNight(state: GameState, emit: Emit): void {
   const target = majority(Object.values(proposals));
   const protectedId: PlayerId | null = state.meta.protect ?? null;
   const victim = target ? state.players.find((p) => p.id === target) : undefined;
+
+  // Remember who the doctor shielded tonight so they can't protect the same player
+  // two nights running (enforced in the protect tool + the human's legal targets).
+  state.meta.lastProtect = protectedId;
 
   console.log(
     `[night] resolve — proposals: ${Object.values(proposals).map((id) => nameOf(state, id)).join(', ') || 'none'} | ` +

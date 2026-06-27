@@ -478,10 +478,11 @@ export function useMafiaGame() {
           : text;
       // Real-time interjection: hand the line straight to the loop, which injects it
       // at the next beat boundary so the AIs react to it. The server echoes it back as
-      // a speak event, so it shows in the transcript like any other line.
-      postControl({ control: 'say', tool: 'speak', args: { text: directed } });
+      // a speak event, so it shows in the transcript like any other line. `to` lets the
+      // scheduler give the agent you addressed the floor for the next beat (direct reply).
+      postControl({ control: 'say', tool: 'speak', args: { text: directed }, to: addresseeId });
     },
-    [addresseeName, postControl],
+    [addresseeName, addresseeId, postControl],
   );
 
   // Mafia private channel — your allies + the targets they've silently picked.

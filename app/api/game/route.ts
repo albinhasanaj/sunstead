@@ -118,8 +118,14 @@ export async function POST(req: Request) {
         if (!tool) return;
         try {
           await tool.execute(say.args ?? {}, { state, agent: human, emit });
-          const disc = state.meta.disc as { last?: string } | undefined;
-          if (disc) disc.last = human.id;
+          const disc = state.meta.disc as { last?: string; directTo?: string | null } | undefined;
+          if (disc) {
+            disc.last = human.id;
+            // If the line was directed at a specific living AI, hand them the floor
+            // for the next beat so a direct question gets a direct answer.
+            const target = say.to ? state.players.find((p) => p.id === say.to && p.alive && !p.private.human) : null;
+            disc.directTo = target ? target.id : null;
+          }
         } catch (err) {
           console.error('[say] human interjection failed:', (err as Error).message);
         }
@@ -250,7 +256,9 @@ function requestAction(state: GameState, agent: AgentState, tools: GameTool[]) {
     alive: names(aliveOthers),
     killTargets: names(aliveOthers.filter((p) => p.role !== 'mafia')),
     investigateTargets: names(aliveOthers), // Detective: anyone but yourself
-    protectTargets: names(alive), // Doctor: anyone alive, including yourself
+    // Doctor: anyone alive (including yourself) EXCEPT whoever you shielded last
+    // night — you can't protect the same player two nights in a row.
+    protectTargets: names(alive.filter((p) => p.id !== state.meta.lastProtect)),
     teammates: agent.role === 'mafia' ? names(state.players.filter((p) => p.alive && p.role === 'mafia' && p.id !== agent.id)) : [],
   };
 }

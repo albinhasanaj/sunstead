@@ -25,10 +25,11 @@ export interface Personality {
 }
 
 export const PERSONALITIES: Personality[] = [
-  // The first five map to models reachable on the AI Gateway free tier, so a
-  // default game runs out of the box. The rest are real but currently gated
-  // (need paid credits); they're ready the moment the credit system lands.
-  { name: 'GPT', model: 'openai/gpt-oss-120b', trait: 'a polished, agreeable diplomat who hedges everything and always sounds reasonable, even when accusing.' },
+  // GPT runs the OpenAI flagship (gpt-5.1); the next four map to models reachable on
+  // the AI Gateway free tier, so a default game still runs out of the box. The rest
+  // are real but currently gated (need paid credits); they're ready the moment the
+  // credit system lands.
+  { name: 'GPT', model: 'openai/gpt-5.1-nano', trait: 'a polished, agreeable diplomat who hedges everything and always sounds reasonable, even when accusing.' },
   { name: 'Claude', model: 'anthropic/claude-haiku-4.5', trait: 'a thoughtful, principled analyst who weighs every side carefully and refuses to accuse without reasoning it through.' },
   { name: 'Gemini', model: 'google/gemini-2.5-flash', trait: 'a confident know-it-all who cites "data" for everything and dazzles the table with facts.' },
   // deepseek-v3.1 on the free tier reliably blows past the global 30s cap, stalling

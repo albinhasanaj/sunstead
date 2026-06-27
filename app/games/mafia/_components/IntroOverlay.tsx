@@ -8,12 +8,37 @@ import { useEffect, useRef, useState } from 'react';
 // Watch: a short cinematic title beat. Either way it eases out into the scene —
 // and conveniently masks the silent first NIGHT while the AI agents act.
 const REVEAL_ROLES = ['mafia', 'detective', 'doctor', 'villager'] as const;
-const ROLE_META: Record<string, { tag: string; color: string; blurb: string }> = {
-  mafia: { tag: 'Mafia', color: '#e0454f', blurb: 'Deceive the town. Strike in the night.' },
-  villager: { tag: 'Villager', color: '#34d399', blurb: 'Unmask the Mafia before they pick you off.' },
-  detective: { tag: 'Detective', color: '#5fd0ff', blurb: 'Investigate one suspect each night.' },
-  doctor: { tag: 'Doctor', color: '#2dd4bf', blurb: 'Shield one soul from death each night.' },
-  unknown: { tag: 'Town', color: '#9aa3c0', blurb: 'Take your seat at the table.' },
+const ROLE_META: Record<string, { tag: string; color: string; blurb: string; text: string }> = {
+  mafia: {
+    tag: 'Mafia',
+    color: '#e0454f',
+    blurb: 'Deceive the town. Strike in the night.',
+    text: 'You are Mafia. Each night you and your fellow Mafia secretly pick one player to kill, and by day you blend in and steer suspicion away from yourself. You win when the Mafia equal or outnumber the town.',
+  },
+  villager: {
+    tag: 'Villager',
+    color: '#34d399',
+    blurb: 'Unmask the Mafia before they pick you off.',
+    text: 'You are a Villager. You have no night action — by day you read the table, argue, and vote to find the Mafia before they outnumber the town.',
+  },
+  detective: {
+    tag: 'Detective',
+    color: '#5fd0ff',
+    blurb: 'Investigate one suspect each night.',
+    text: 'You are the Detective. Each night you secretly investigate one player and learn whether they are Mafia. Keep it quiet, then help the town vote the Mafia out.',
+  },
+  doctor: {
+    tag: 'Doctor',
+    color: '#2dd4bf',
+    blurb: 'Shield one soul from death each night.',
+    text: 'You are the Doctor. Each night you protect one player from being killed — only one save per round, and never the same player two nights in a row. You win when every Mafia is voted out.',
+  },
+  unknown: {
+    tag: 'Town',
+    color: '#9aa3c0',
+    blurb: 'Take your seat at the table.',
+    text: 'You take your seat at the table.',
+  },
 };
 
 export default function IntroOverlay({
@@ -29,11 +54,20 @@ export default function IntroOverlay({
 }) {
   const [label, setLabel] = useState<string>(REVEAL_ROLES[0]);
   const [landed, setLanded] = useState(false);
+  // After the slot lands on your role, slide into a full black briefing screen that
+  // spells out your task + rules before you actually drop into the game.
+  const [briefing, setBriefing] = useState(false);
   const [closing, setClosing] = useState(false);
   const roleRef = useRef(role);
   roleRef.current = role;
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
+
+  // Dismiss the briefing → fade the whole overlay out, then hand control to the game.
+  const enter = () => {
+    setClosing(true);
+    setTimeout(() => doneRef.current(), 600);
+  };
 
   // Watch: just a title beat, then ease out.
   useEffect(() => {
@@ -62,8 +96,10 @@ export default function IntroOverlay({
       const final = known ? roleRef.current : 'villager';
       setLabel(final);
       setLanded(true);
-      setTimeout(() => setClosing(true), 2100);
-      setTimeout(() => doneRef.current(), 2750);
+      // Let the reveal flourish breathe, then slide into the role briefing. The
+      // briefing owns the close from here (via its "Enter the game" button), so we
+      // no longer auto-dismiss — the player reads their task + rules at their pace.
+      setTimeout(() => setBriefing(true), 2200);
     };
 
     const tick = () => {
@@ -91,9 +127,10 @@ export default function IntroOverlay({
 
   return (
     <div
-      className={`absolute inset-0 z-[60] flex flex-col items-center justify-center bg-black/85 backdrop-blur-lg transition-opacity duration-700 ${
-        closing ? 'opacity-0' : 'opacity-100'
-      }`}
+      onClick={briefing ? enter : undefined}
+      className={`absolute inset-0 z-[60] flex flex-col items-center justify-center backdrop-blur-lg transition-opacity duration-700 ${
+        briefing ? 'cursor-pointer bg-black' : 'bg-black/85'
+      } ${closing ? 'opacity-0' : 'opacity-100'}`}
     >
       <style>{`
         @keyframes introIn { from { opacity:0; transform:translateY(10px) scale(.94); } to { opacity:1; transform:none; } }
@@ -115,6 +152,20 @@ export default function IntroOverlay({
               <span key={n} className="h-1.5 w-1.5 rounded-full bg-amber-300" style={{ animation: `introShimmer 1s ease ${n * 0.18}s infinite` }} />
             ))}
           </div>
+        </div>
+      ) : briefing ? (
+        <div style={{ animation: 'introIn .55s ease both' }} className="flex w-full max-w-lg flex-col items-center px-8 text-center">
+          <p
+            className="text-lg font-semibold leading-relaxed sm:text-xl"
+            style={{ color: meta.color, textShadow: `0 0 18px ${meta.color}88, 0 0 38px ${meta.color}55` }}
+          >
+            {meta.text}
+            {label === 'mafia' &&
+              (teammates.length
+                ? ` Your ${teammates.length > 1 ? 'allies are' : 'ally is'} ${teammates.join(', ')}.`
+                : ' You are the lone wolf.')}
+          </p>
+          <p className="mt-10 text-sm text-neutral-500">Click anywhere to begin</p>
         </div>
       ) : (
         <div className="relative flex flex-col items-center">
@@ -157,33 +208,6 @@ export default function IntroOverlay({
           >
             {landed ? meta.blurb : ''}
           </p>
-
-          {/* when you land on Mafia, reveal who you're conspiring with */}
-          {landed && label === 'mafia' && (
-            <div
-              className="mt-5 flex flex-col items-center transition-opacity duration-500"
-              style={{ animation: 'introIn .6s ease .15s both' }}
-            >
-              <p className="text-[10px] font-semibold uppercase tracking-[0.4em] text-neutral-500">
-                {teammates.length ? (teammates.length > 1 ? 'Your allies' : 'Your ally') : 'No allies'}
-              </p>
-              {teammates.length ? (
-                <div className="mt-2.5 flex flex-wrap items-center justify-center gap-2">
-                  {teammates.map((name) => (
-                    <span
-                      key={name}
-                      className="rounded-full border px-3 py-1 text-sm font-medium"
-                      style={{ borderColor: `${ROLE_META.mafia.color}55`, color: ROLE_META.mafia.color, background: `${ROLE_META.mafia.color}1a` }}
-                    >
-                      {name}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-2 text-sm text-neutral-400">You&apos;re the lone wolf.</p>
-              )}
-            </div>
-          )}
         </div>
       )}
     </div>

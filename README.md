@@ -39,7 +39,7 @@ Every tool's `legalIn` enforces phase + role, so a Villager calling
 - **Next.js (App Router) + TypeScript**
 - **Vercel AI SDK (`ai`) via AI Gateway** — one `AI_GATEWAY_API_KEY`, models as
   `creator/model` strings. **One model per seat**: each AI-named character runs on
-  that lab's actual model (`GPT→openai/gpt-oss-120b`, `Claude→anthropic/claude-haiku-4.5`,
+  that lab's actual model (`GPT→openai/gpt-5.1-nano`, `Claude→anthropic/claude-haiku-4.5`,
   `Gemini→google/gemini-2.5-flash`, `DeepSeek→deepseek/deepseek-v3.1`, `Qwen→alibaba/qwen3-32b`, …).
   Any gateway model works — `roles.ts` is just the default catalog.
 - ElevenLabs for voice (Phase 4+), SSE for realtime transport (Phase 2+).

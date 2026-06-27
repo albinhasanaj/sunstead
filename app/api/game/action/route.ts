@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 // promise in session.pending when it asked for an action; we resolve it here.
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
-  const { gameId, tool, args, skip, control } = body ?? {};
+  const { gameId, tool, args, skip, control, to } = body ?? {};
   const session = gameId ? sessions.get(gameId) : undefined;
 
   if (!session) return Response.json({ ok: false, error: 'no such game' }, { status: 404 });
@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   // boundary so the AIs react to it — the human is always first priority.
   if (control === 'say') {
     if (typeof tool === 'string') {
-      session.pendingSay = { tool, args: args ?? {} };
+      session.pendingSay = { tool, args: args ?? {}, to: typeof to === 'string' ? to : null };
       session.turnAbort?.abort(); // barge-in: drop any in-flight AI line so yours lands first
       session.wake?.(); // wake the pacing loop so it injects (and the AIs react) now
     }

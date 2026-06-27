@@ -255,12 +255,19 @@ const investigate: GameTool = {
 
 const protect: GameTool = {
   name: 'protect',
-  description: 'Secretly protect one living player from the Mafia tonight. If they are attacked, they survive.',
+  description:
+    'Secretly protect one living player from the Mafia tonight. If they are attacked, they survive. ' +
+    'You may NOT protect the same player two nights in a row.',
   inputSchema: z.object({ target: z.string().describe('Who to protect, by name.') }),
   legalIn: (state, agent) => state.phase === PHASE.NIGHT && agent.role === ROLE.DOCTOR,
   execute: async (args, ctx) => {
     const t = resolve(ctx.state, args.target, { aliveOnly: true });
     if (!t) return `No living player named "${args.target}".`;
+    // No two-nights-in-a-row save: you can shield the same person again, just not
+    // on consecutive nights (lastProtect is this player from the night just past).
+    if (t.id === ctx.state.meta.lastProtect) {
+      return `You shielded ${t.name} last night — you can't protect the same player two nights in a row. Choose someone else.`;
+    }
     ctx.state.meta.protect = t.id;
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'protect', target: t.id });
     return `You are protecting ${t.name} tonight.`;

@@ -64,7 +64,8 @@ export function systemPrompt(state: GameState, agent: AgentState): string {
   } else if (agent.role === ROLE.DOCTOR) {
     lines.push(
       'YOUR SECRET ROLE: DOCTOR (town).',
-      'GOAL: find and vote out all the Mafia. Each night you may protect one player from being killed.',
+      'GOAL: find and vote out all the Mafia. Each night you may protect ONE player from being killed.',
+      'You may protect yourself, but you CANNOT protect the same player on two consecutive nights.',
     );
   } else {
     lines.push(
@@ -130,6 +131,12 @@ export function renderContext(state: GameState, agent: AgentState): string {
     );
   }
 
+  // Doctor night — name last night's shield so they don't pick the same player again
+  // (the protect tool rejects a repeat, but flagging it up front avoids a wasted try).
+  if (state.phase === PHASE.NIGHT && agent.role === ROLE.DOCTOR && state.meta.lastProtect) {
+    out.push('', `You shielded ${nameOf(state, state.meta.lastProtect as PlayerId)} last night — you CANNOT protect them again tonight. Choose someone else.`);
+  }
+
   out.push('', 'PUBLIC CONVERSATION SO FAR:', transcript, '');
 
   out.push(instruction(state, agent));
@@ -145,7 +152,7 @@ function instruction(state: GameState, agent: AgentState): string {
       if (agent.role === ROLE.DETECTIVE)
         return 'It is night. Call update_beliefs, then investigate one player.';
       if (agent.role === ROLE.DOCTOR)
-        return 'It is night. Call update_beliefs, then protect one player.';
+        return 'It is night. Call update_beliefs, then protect one player (you may not pick whoever you shielded last night).';
       return 'It is night — you sleep.';
     case PHASE.DISCUSSION: {
       // The dead are OUT of the game. Without this, agents fixate on (or "accuse")

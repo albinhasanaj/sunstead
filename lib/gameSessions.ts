@@ -22,7 +22,9 @@ export interface GameSession {
   state?: GameState | null;
   // Real-time discussion: the human isn't a scheduled seat — they interject. A line
   // they submit lands here and the SSE loop injects it at the next beat boundary.
-  pendingSay?: NonNullable<HumanChoice> | null;
+  // `to` is the addressee id when the human directed the line at a specific agent
+  // (clicked them) — that agent is handed the floor for the very next beat.
+  pendingSay?: (NonNullable<HumanChoice> & { to?: string | null }) | null;
   // Epoch (ms) until which the human is actively composing (recording/typing): while
   // set, the loop holds — it won't let an AI take the floor over them.
   composingUntil?: number;
