@@ -90,7 +90,10 @@ export async function POST(req: Request) {
     names = (names.length ? names : AI_POOL).slice(0, totalSeats);
   }
 
-  const gameId = crypto.randomUUID();
+  // The game (session) id. The client mints it up front so the game is addressable
+  // in the URL (?id=…) before the stream opens; we honor a well-formed one and mint
+  // our own otherwise. It keys the DB row, long-term memory, and the SSE rendezvous.
+  const gameId = typeof body?.id === 'string' && UUID_RE.test(body.id) ? body.id.toLowerCase() : crypto.randomUUID();
   const userId = resolveUserId(body?.userId);
   const session: GameSession = { id: gameId, humanId: null, pending: null, closed: false };
   sessions.set(gameId, session);

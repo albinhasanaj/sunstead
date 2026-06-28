@@ -31,7 +31,7 @@ const discussionRounds = (state: GameState): number => cfg(state).discussionRoun
 // hand-raise, then scores — see ./liveUrge.
 type LogLine = { speaker: PlayerId; text: string };
 // Per-discussion scratch held on state.meta.disc (untyped Record there; typed here).
-type Disc = { round: number; beat: number; budget: number; spoke: Record<PlayerId, number>; last: PlayerId | null; directTo?: PlayerId | null };
+type Disc = { round: number; beat: number; budget: number; spoke: Record<PlayerId, number>; last: PlayerId | null; directTo?: PlayerId | null; mustAnswer?: PlayerId | null };
 
 export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerId | null> {
   if (state.phase !== PHASE.DISCUSSION) return null;
@@ -60,9 +60,11 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
       d.beat += 1;
       d.spoke[target.id] = (d.spoke[target.id] ?? 0) + 1;
       d.last = target.id;
+      d.mustAnswer = target.id; // they were just put on the spot → must answer (can't yield)
       return target.id;
     }
   }
+  d.mustAnswer = null; // no one is on the spot on a normal beat
 
   // Consensus skip-to-vote: if the human has asked to move on AND a majority of the
   // living table is ready (the human + every AI that has already said its piece),

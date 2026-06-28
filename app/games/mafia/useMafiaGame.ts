@@ -355,6 +355,18 @@ export function useMafiaGame() {
       announcedTeamRef.current = false;
       setMode(m);
       setRunning(true);
+      // Mint the game (session) id client-side so the game is addressable immediately:
+      // we reflect it in the URL (?id=…) and hand it to the API, which keys the DB row,
+      // long-term memory, and the SSE session off the same id. The server echoes it back
+      // on the 'game' event (same value), keeping everything in lockstep.
+      const id = crypto.randomUUID();
+      setGameId(id);
+      gameIdRef.current = id;
+      try {
+        window.history.replaceState(null, '', `${window.location.pathname}?id=${id}`);
+      } catch {
+        /* history unavailable — the id still drives the game, just not the URL */
+      }
       // Voice is a config toggle — default the mute state to it (server echoes the
       // resolved value on the 'game' event, which we honor too).
       setVoiceOn(config?.voiceEnabled !== false);
@@ -374,6 +386,7 @@ export function useMafiaGame() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            id,
             mode: m,
             ...(userId ? { userId } : {}),
             ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),

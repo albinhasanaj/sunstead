@@ -67,9 +67,11 @@ function difficultyGuidance(role: string, difficulty: Difficulty): string[] {
 // configured difficulty. Policy lives here, never in the per-turn user message.
 export function systemPrompt(state: GameState, agent: AgentState): string {
   const c = cfg(state);
+  const roster = state.players.map((p) => p.name).join(', ');
   const lines: string[] = [
-    `You are ${agent.name}.`,
-    `You are playing Mafia, a social deduction game. You are ${agent.name} at the table.`,
+    `You are ${agent.name}. That is your ONLY identity here: speak as ${agent.name}, refer to yourself as ${agent.name}, and call everyone else by their table name.`,
+    `You are playing Mafia, a social deduction game. The players at the table are: ${roster}. Every other player is a SEPARATE person — not you.`,
+    `Table names (Claude, GPT, Opus, Haiku, Gemini, Grok, …) are just seat labels — they do NOT tell you which AI anyone is. A seat that shares a name with an AI you identify with is NOT you; only ${agent.name} is you. Never break character or answer as another seat.`,
     '',
     'GLOBAL RULES:',
     '- Every turn: FIRST call update_beliefs to privately record your reasoning, THEN take exactly ONE game action.',
@@ -77,6 +79,14 @@ export function systemPrompt(state: GameState, agent: AgentState): string {
     '  if no one calls on you: pressure (0-10, how badly you want the floor right now), holding (a point you are',
     '  sitting on, ready to drop), and triggers (topics, player names, or claim-types that should pull you back in,',
     '  e.g. "doctor claim", "Gemini", "a vote on me"). Raise your pressure when the talk lands in your wheelhouse.',
+    '- LIVE TABLE: many players want to talk at once and the keenest speaks next, so by the time you get the floor the moment',
+    '  may have moved on. Read the latest lines FIRST — never just repeat a point someone already made; add something new, or',
+    '  call yield to stay silent. You do not have to talk every beat.',
+    '- PRESSING ONE PLAYER: to put a specific player on the spot, name them and set speak\'s "to" field. Everyone still hears',
+    '  it, but THEY get the next word to answer — so give them room instead of piling on. You get only ONE direct call-out per',
+    '  round, so spend it on the read that matters. (Accusing someone also puts them on the spot to defend themselves.)',
+    '- IF YOU ARE PUT ON THE SPOT: the table is waiting on you — answer it. Dodging or deflecting instead of giving a real',
+    '  read is itself a Mafia tell.',
     '- Speak naturally and briefly (1-3 sentences), like a real person at a table. No stage directions, no narration.',
     '- Act ONLY on what you have seen in the public conversation and your own private knowledge. Never claim knowledge',
     '  your role cannot have — inventing a fact you were never told is a tell, not a bluff.',
@@ -167,6 +177,20 @@ export function renderContext(state: GameState, agent: AgentState): string {
     out.push(`Your secret knowledge: ${agent.private.knowledge.join(' ')}`);
   }
 
+  // Live-floor cues during discussion: whether YOU were just put on the spot (must
+  // answer), and whether your once-per-round direct call-out is still available.
+  if (state.phase === PHASE.DISCUSSION) {
+    const disc = state.meta.disc as { mustAnswer?: PlayerId | null } | undefined;
+    if (disc?.mustAnswer === agent.id) {
+      out.push('', '➤ You were just put on the spot — the table is waiting for YOUR answer. Address it head-on; dodging reads as a tell.');
+    }
+    const last = agent.private.lastDirectCallRound as number | undefined;
+    const callReady = last == null || state.round > last; // mirrors the once-per-round cooldown
+    out.push(callReady
+      ? 'Your direct call-out is available this round (set speak\'s "to" to put one player on the spot).'
+      : 'You have already used your direct call-out this round.');
+  }
+
   // Mafia night — silent. The Mafia don't talk; they only see each other and the
   // kill targets each has locked in so far.
   if (state.phase === PHASE.NIGHT && isMafia(agent.role)) {
@@ -222,7 +246,7 @@ function instruction(state: GameState, agent: AgentState): string {
       const openLine = opener
         ? ' No one has spoken yet — you are opening the discussion, so lead with a concrete read of the living, not "what does everyone think?".'
         : '';
-      return `It is open discussion. Call update_beliefs, then take ONE action: speak, accuse, defend, or claim_role. Be persuasive.${deadLine}${openLine}`;
+      return `It is open discussion. Call update_beliefs, then take ONE action: speak (add "to" to put a player on the spot), accuse, defend, claim_role — or yield to stay silent if you have nothing new to add. React to the MOST RECENT lines; don't repeat what was just said. Be persuasive.${deadLine}${openLine}`;
     }
     case PHASE.VOTE: {
       const revoteAmong = state.meta.revoteAmong as PlayerId[] | null | undefined;

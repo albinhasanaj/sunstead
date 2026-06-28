@@ -21,6 +21,32 @@ function resolve(state: GameState, ref: string, opts: { aliveOnly?: boolean } = 
 
 const inPhase = (phase: string) => (state: GameState) => state.phase === phase;
 
+// A player may issue at most one DIRECT call-out (speak `to`) this often. Once per
+// round keeps a pointed question weighty without letting one seat hog the floor by
+// chain-pinning people. Bump to 2-3 for a rarer "few rounds" cooldown.
+const DIRECT_CALL_COOLDOWN_ROUNDS = 1;
+
+// Per-discussion scratch the scheduler keeps on state.meta.disc (typed in phases.ts).
+type DiscScratch = { directTo?: PlayerId | null; mustAnswer?: PlayerId | null } | undefined;
+
+// Whether this agent's direct call-out is off cooldown right now.
+function directCallReady(agent: AgentState, round: number): boolean {
+  const last = agent.private.lastDirectCallRound as number | undefined;
+  return last == null || round - last >= DIRECT_CALL_COOLDOWN_ROUNDS;
+}
+
+// Put one player ON THE SPOT: hand them the next discussion beat (the scheduler's
+// directTo) so they answer before anyone piles on. They cannot yield that turn (the
+// answer-obligation is enforced in phases.ts via disc.mustAnswer). Public, like all
+// day talk — everyone hears the call-out and listens for the reply.
+function putOnSpot(ctx: ToolContext, target: AgentState | undefined): boolean {
+  if (ctx.state.phase !== PHASE.DISCUSSION) return false;
+  const disc = ctx.state.meta.disc as DiscScratch;
+  if (!disc || !target || target.id === ctx.agent.id || !target.alive) return false;
+  disc.directTo = target.id;
+  return true;
+}
+
 // Record a public line by persisting it to long-term memory (pgvector). Awaited so
 // a later turn's recall is guaranteed to see it.
 async function recordPublic(ctx: ToolContext, text: string): Promise<void> {
@@ -97,14 +123,35 @@ const updateBeliefs: GameTool = {
 const speak: GameTool = {
   name: 'speak',
   description:
-    'Say something out loud to the whole table during discussion. Use this to share reads, ask questions, ' +
-    'apply pressure, or (if you are Mafia) blend in and steer suspicion away from yourself.',
-  inputSchema: z.object({ text: z.string().describe('What you say aloud, in your own voice.') }),
+    'Say something out loud to the table during discussion — share reads, ask questions, apply pressure, or (if Mafia) ' +
+    'blend in. Set "to" to a player\'s name to make it a DIRECT call-out: everyone still hears it, but that player is put ' +
+    'on the spot and gets the next word to answer you. You may direct-call only once per round, so spend it well.',
+  inputSchema: z.object({
+    text: z.string().describe('What you say aloud, in your own voice.'),
+    to: z
+      .string()
+      .optional()
+      .describe('Optional: a living player to put on the spot with this line. They must answer next. One per round.'),
+  }),
   legalIn: inPhase(PHASE.DISCUSSION),
   execute: async (args, ctx) => {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: args.text });
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: args.text });
     await recordPublic(ctx, args.text);
+
+    // Direct call-out: if a valid target is named and the caller is off cooldown, put
+    // them on the spot. On cooldown, the line still posts but compels no answer.
+    if (args.to) {
+      const t = resolve(ctx.state, args.to, { aliveOnly: true });
+      if (t && t.id !== ctx.agent.id) {
+        if (directCallReady(ctx.agent, ctx.state.round) && putOnSpot(ctx, t)) {
+          ctx.agent.private.lastDirectCallRound = ctx.state.round;
+          ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'call_out', target: t.id });
+          return `You put ${t.name} on the spot — they answer next. Your turn is over.`;
+        }
+        return `You spoke (you've already used your direct call-out this round, so ${t.name} isn't compelled to answer). Your turn is over.`;
+      }
+    }
     return 'You spoke. Your turn is over.';
   },
 };
@@ -137,6 +184,9 @@ const accuse: GameTool = {
     ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'accuse', target: t.id });
     await recordPublic(ctx, line);
+    // An accusation puts the accused on the spot — they get the next word to defend.
+    // (No cooldown: accusing is its own weighty, self-committing act.)
+    putOnSpot(ctx, t);
     return `You accused ${t.name}. Your turn is over.`;
   },
 };
@@ -178,6 +228,39 @@ const claimRole: GameTool = {
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'claim_role' });
     await recordPublic(ctx, line);
     return 'You made your claim. Your turn is over.';
+  },
+};
+
+// ── yield  (DISCUSSION) ────────────────────────────────────────────────────────
+// Stand down and listen this beat instead of adding noise. Not for the opener, and
+// not for whoever was just put on the spot (they owe the table an answer).
+const yieldFloor: GameTool = {
+  name: 'yield',
+  description:
+    'Stay SILENT this beat and let the discussion go on without you. Use it when your point was already made by someone ' +
+    'else, or when a player was just put on the spot and should answer first — listening beats repeating. Adds nothing ' +
+    'to the transcript.',
+  inputSchema: z.object({
+    note: z.string().max(120).optional().describe('Private reason you held back (no one sees this).'),
+  }),
+  legalIn: (state, agent) => {
+    if (state.phase !== PHASE.DISCUSSION) return false;
+    const disc = state.meta.disc as { mustAnswer?: PlayerId | null } | undefined;
+    if (disc?.mustAnswer === agent.id) return false; // you were called out — you must answer
+    const log = state.publicLog;
+    return log.length > 0 && log[log.length - 1].speaker !== 'system'; // the opener must lead, not yield
+  },
+  execute: async (_args, ctx) => {
+    // Drop this seat's bid so the auction won't re-pick it on its own urge next beat
+    // (it can still be pulled back in by being named or directly addressed).
+    ctx.agent.private.bid = {
+      pressure: 0,
+      holding: '',
+      triggers: [],
+      round: ctx.state.round,
+      beat: (ctx.state.meta.disc?.beat as number | undefined) ?? 0,
+    };
+    return 'You held back and stayed silent this beat. Your turn is over.';
   },
 };
 
@@ -290,6 +373,7 @@ const ALL: GameTool[] = [
   accuse,
   defend,
   claimRole,
+  yieldFloor,
   vote,
   mafiaProposeKill,
   investigate,
