@@ -38,17 +38,19 @@ export const PERSONALITIES: Personality[] = [
   { name: 'Gemini', model: 'google/gemini-2.5-flash' },
   { name: 'GeminiPro', model: 'google/gemini-2.5-pro' },
   { name: 'Grok', model: 'xai/grok-4.20-0309-non-reasoning' },
-  // Open-weight seats route through Featherless (FEATHERLESS_API_KEY). IDs are the
-  // HuggingFace org/repo the platform serves. DeepSeek keeps a tighter leash: it's
-  // a large reasoning model and can blow past the global cap, so it fails over to
-  // the gateway fallback (gemini) sooner instead of stalling the table.
+  // Open-weight seats. Most route through Featherless (FEATHERLESS_API_KEY) — IDs are
+  // the HuggingFace org/repo the platform serves. Llama and Gemma are GATED on the
+  // Featherless plan, so they route through the Vercel AI Gateway instead (a `meta/` or
+  // `google/` slug falls through to the gateway in resolveModel). DeepSeek keeps a
+  // tighter leash: it's a large reasoning model and can blow past the global cap, so it
+  // fails over to the gateway fallback (gemini) sooner instead of stalling the table.
   { name: 'DeepSeek', model: 'featherless/deepseek-ai/DeepSeek-V3.1', timeoutMs: 20000 },
   { name: 'Kimi', model: 'featherless/moonshotai/Kimi-K2-Instruct-0905' },
   { name: 'GLM', model: 'featherless/zai-org/GLM-4.6' },
   { name: 'Qwen', model: 'featherless/Qwen/Qwen3-235B-A22B' },
-  { name: 'Llama', model: 'featherless/meta-llama/Llama-3.3-70B-Instruct' },
+  { name: 'Llama', model: 'meta/llama-3.3-70b' }, // gateway (gated on Featherless)
   { name: 'Mistral', model: 'featherless/mistralai/Mistral-Small-3.2-24B-Instruct-2506' },
-  { name: 'Gemma', model: 'featherless/google/gemma-3-27b-it' },
+  { name: 'Gemma', model: 'google/gemma-4-31b-it' }, // gateway (Gemma 3 27B not on Featherless plan)
 ];
 
 // Look up a seat's default model by character name (case-insensitive).
