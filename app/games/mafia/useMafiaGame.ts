@@ -688,6 +688,9 @@ export function useMafiaGame() {
     // Live voice loudness (0..1) for the 3D scene's speaking-seat glow. Stable getter
     // sampled per animation frame, so it never triggers React re-renders.
     getAudioLevel: voice.getLevel,
+    // Binaural audio nodes (panner + listener) for the scene to pose each frame, so a
+    // line is heard FROM the speaking seat's direction. Stable getter; null until audio starts.
+    getSpatial: voice.getSpatial,
     start,
     submitAction,
     skipTurn,

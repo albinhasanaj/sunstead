@@ -83,6 +83,7 @@ export default function Home() {
     thinkingLabel,
     nameOf,
     getAudioLevel,
+    getSpatial,
     start,
     submitAction,
     skipTurn,
@@ -134,6 +135,7 @@ export default function Home() {
           addresseeId={inDiscussion ? selected : null}
           revealRoles={mode === 'watch' && revealRoles}
           getAudioLevel={getAudioLevel}
+          getSpatial={getSpatial}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />

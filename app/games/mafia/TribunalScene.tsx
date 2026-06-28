@@ -45,6 +45,10 @@ export type Props = {
   addresseeId?: string | null; // who you've clicked to address your next line to
   revealRoles?: boolean; // watch-mode spectator: reveal every seat's true role overhead
   getAudioLevel?: () => number; // live voice loudness (0..1) → drives the speaking seat's glow
+  // Binaural audio nodes to pose each frame: the listener follows the camera and the
+  // panner sits at the speaking seat, so voices come FROM their seat (left/right ears).
+  // lowpass + wet are modulated by distance for a natural "across the room" feel.
+  getSpatial?: () => { panner: PannerNode; listener: AudioListener; lowpass: BiquadFilterNode; wet: GainNode } | null;
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -1016,6 +1020,27 @@ export default function TribunalScene(props: Props) {
     const tmpFwd = new THREE.Vector3();
     const tmpRight = new THREE.Vector3();
     const UP = new THREE.Vector3(0, 1, 0);
+    // Scratch + helpers for binaural audio: pose the listener at the camera and the
+    // panner at the speaking seat each frame (Three.js and Web Audio share a
+    // right-handed coordinate space, so world coords feed both directly).
+    const _aLis = new THREE.Vector3();
+    const _aFwd = new THREE.Vector3();
+    const _aUp = new THREE.Vector3();
+    const _aSpk = new THREE.Vector3();
+    const setListenerPose = (l: AudioListener, p: THREE.Vector3, f: THREE.Vector3, u: THREE.Vector3) => {
+      if (l.positionX) {
+        l.positionX.value = p.x; l.positionY.value = p.y; l.positionZ.value = p.z;
+        l.forwardX.value = f.x; l.forwardY.value = f.y; l.forwardZ.value = f.z;
+        l.upX.value = u.x; l.upY.value = u.y; l.upZ.value = u.z;
+      } else {
+        l.setPosition(p.x, p.y, p.z);
+        l.setOrientation(f.x, f.y, f.z, u.x, u.y, u.z);
+      }
+    };
+    const setPannerPos = (pn: PannerNode, p: THREE.Vector3) => {
+      if (pn.positionX) { pn.positionX.value = p.x; pn.positionY.value = p.y; pn.positionZ.value = p.z; }
+      else { pn.setPosition(p.x, p.y, p.z); }
+    };
     const cAmb = new THREE.Color();
     const cLamp = new THREE.Color();
     const cRim = new THREE.Color();
@@ -1069,6 +1094,30 @@ export default function TribunalScene(props: Props) {
       rim.color.lerp(cRim.set(v.rim), 0.06);
       rim.intensity += (v.rimI - rim.intensity) * 0.06;
       bloom.strength += (v.bloom - bloom.strength) * 0.06;
+
+      // ── binaural audio: listener = camera, panner = the speaking seat ──
+      // So a voice arrives from the speaker's actual direction (left seat → left ear),
+      // and DISTANCE shapes it: farther = quieter (panner), duller (lowpass) and more
+      // room reverb (wet) — an open conversation across the table, not a dry booth.
+      const spatial = p.getSpatial?.();
+      if (spatial) {
+        camera.getWorldPosition(_aLis);
+        camera.getWorldDirection(_aFwd);
+        _aUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        setListenerPose(spatial.listener, _aLis, _aFwd, _aUp);
+        const spk = p.speakingId ? seatById.get(p.speakingId) : undefined;
+        if (spk) _aSpk.set(spk.pos.x, 1.4, spk.pos.z); // at head height
+        else _aSpk.set(0, 1.4, 0); // fall back to table centre between lines
+        setPannerPos(spatial.panner, _aSpk);
+        // Distance from your ear to the speaker drives the "air": eased so it glides
+        // rather than steps as the camera/speaker move. Kept GENTLE — far seats should
+        // sound a touch farther, not muffled/underwater.
+        const dist = _aLis.distanceTo(_aSpk);
+        const cutoff = THREE.MathUtils.clamp(19000 - dist * 1100, 6500, 19000); // Hz
+        const wetAmt = THREE.MathUtils.clamp(0.03 + (dist - 3) * 0.018, 0.03, 0.16);
+        spatial.lowpass.frequency.value += (cutoff - spatial.lowpass.frequency.value) * 0.1;
+        spatial.wet.gain.value += (wetAmt - spatial.wet.gain.value) * 0.1;
+      }
 
       // whoever holds the floor (accused first, else current speaker) is the focus
       const focus = p.accusedId ? seatById.get(p.accusedId) : p.speakingId ? seatById.get(p.speakingId) : undefined;
