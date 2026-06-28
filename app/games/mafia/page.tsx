@@ -82,6 +82,7 @@ export default function Home() {
     captionText,
     thinkingLabel,
     nameOf,
+    getAudioLevel,
     start,
     submitAction,
     skipTurn,
@@ -132,6 +133,7 @@ export default function Home() {
           thinkingIds={mode === 'play' && phase?.phase === 'NIGHT' ? [] : thinkingIds}
           addresseeId={inDiscussion ? selected : null}
           revealRoles={mode === 'watch' && revealRoles}
+          getAudioLevel={getAudioLevel}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />

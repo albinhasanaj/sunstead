@@ -44,6 +44,7 @@ export type Props = {
   thinkingIds?: string[]; // seats currently mid-LLM (deliberating) → overhead think bubble
   addresseeId?: string | null; // who you've clicked to address your next line to
   revealRoles?: boolean; // watch-mode spectator: reveal every seat's true role overhead
+  getAudioLevel?: () => number; // live voice loudness (0..1) → drives the speaking seat's glow
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -461,20 +462,20 @@ type ViewTarget = {
 };
 function viewTarget(phase: string, myRole: string, awake: boolean): ViewTarget {
   if (phase === 'NIGHT' && !awake)
-    return { amb: 0x000000, ambI: 0, lamp: 0x000000, lampI: 0, fog: 0x000000, fogD: 0.32, bg: 0x000000, rim: 0x000000, rimI: 0, bloom: 0.2, hide: true, label: 'NIGHT — you are asleep', labelColor: '#3a3f50' };
+    return { amb: 0x000000, ambI: 0, lamp: 0x000000, lampI: 0, fog: 0x000000, fogD: 0.32, bg: 0x000000, rim: 0x000000, rimI: 0, bloom: 0.1, hide: true, label: 'NIGHT — you are asleep', labelColor: '#3a3f50' };
   if (phase === 'NIGHT' && myRole === 'mafia')
-    return { amb: 0x401015, ambI: 0.5, lamp: 0xff3838, lampI: 90, fog: 0x14060a, fogD: 0.085, bg: 0x0a0204, rim: 0x4a0a12, rimI: 0.6, bloom: 0.9, hide: false, label: 'NIGHT — choose your target', labelColor: '#ff6b6b' };
+    return { amb: 0x401015, ambI: 0.5, lamp: 0xff3838, lampI: 80, fog: 0x14060a, fogD: 0.085, bg: 0x0a0204, rim: 0x4a0a12, rimI: 0.6, bloom: 0.4, hide: false, label: 'NIGHT — choose your target', labelColor: '#ff6b6b' };
   if (phase === 'NIGHT' && myRole === 'detective')
-    return { amb: 0x10243f, ambI: 0.55, lamp: 0x6fb4ff, lampI: 120, fog: 0x05101c, fogD: 0.07, bg: 0x030812, rim: 0x2a5ba0, rimI: 0.7, bloom: 0.85, hide: false, label: 'NIGHT — investigate', labelColor: '#7fc4ff' };
+    return { amb: 0x10243f, ambI: 0.55, lamp: 0x6fb4ff, lampI: 105, fog: 0x05101c, fogD: 0.07, bg: 0x030812, rim: 0x2a5ba0, rimI: 0.7, bloom: 0.38, hide: false, label: 'NIGHT — investigate', labelColor: '#7fc4ff' };
   if (phase === 'NIGHT' && myRole === 'doctor')
-    return { amb: 0x103a36, ambI: 0.55, lamp: 0x5fe0c8, lampI: 120, fog: 0x05140f, fogD: 0.07, bg: 0x03100c, rim: 0x2aa090, rimI: 0.7, bloom: 0.85, hide: false, label: 'NIGHT — protect', labelColor: '#6fe6cf' };
+    return { amb: 0x103a36, ambI: 0.55, lamp: 0x5fe0c8, lampI: 105, fog: 0x05140f, fogD: 0.07, bg: 0x03100c, rim: 0x2aa090, rimI: 0.7, bloom: 0.38, hide: false, label: 'NIGHT — protect', labelColor: '#6fe6cf' };
   if (phase === 'NIGHT')
     // awake spectator / other (watch mode) — a dim, visible night
-    return { amb: 0x16203a, ambI: 0.45, lamp: 0x88a0d0, lampI: 110, fog: 0x070a14, fogD: 0.065, bg: 0x05060a, rim: 0x3050a0, rimI: 0.55, bloom: 0.8, hide: false, label: 'NIGHT', labelColor: '#8b93a8' };
+    return { amb: 0x16203a, ambI: 0.45, lamp: 0x88a0d0, lampI: 100, fog: 0x070a14, fogD: 0.065, bg: 0x05060a, rim: 0x3050a0, rimI: 0.55, bloom: 0.34, hide: false, label: 'NIGHT', labelColor: '#8b93a8' };
   if (phase === 'VOTE')
-    return { amb: 0x2a2440, ambI: 0.5, lamp: 0xffd0a0, lampI: 240, fog: 0x0c0a14, fogD: 0.05, bg: 0x080610, rim: 0x6a4fae, rimI: 0.6, bloom: 0.85, hide: false, label: 'VOTE — the table decides', labelColor: '#b79cff' };
+    return { amb: 0x2a2440, ambI: 0.5, lamp: 0xffd0a0, lampI: 165, fog: 0x0c0a14, fogD: 0.05, bg: 0x080610, rim: 0x6a4fae, rimI: 0.6, bloom: 0.36, hide: false, label: 'VOTE — the table decides', labelColor: '#b79cff' };
   // DISCUSSION (warm day)
-  return { amb: 0x2a3350, ambI: 0.4, lamp: 0xffe2b0, lampI: 220, fog: 0x05060a, fogD: 0.05, bg: 0x05060a, rim: 0x4060ff, rimI: 0.5, bloom: 0.75, hide: false, label: 'DISCUSSION', labelColor: '#8b93a8' };
+  return { amb: 0x2a3350, ambI: 0.4, lamp: 0xffe2b0, lampI: 155, fog: 0x05060a, fogD: 0.05, bg: 0x05060a, rim: 0x4060ff, rimI: 0.5, bloom: 0.3, hide: false, label: 'DISCUSSION', labelColor: '#8b93a8' };
 }
 
 const R = 4.2; // seating radius
@@ -502,7 +503,7 @@ export default function TribunalScene(props: Props) {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.05;
+    renderer.toneMappingExposure = 0.95;
     mount.appendChild(renderer.domElement);
     renderer.domElement.style.display = 'block';
 
@@ -513,13 +514,16 @@ export default function TribunalScene(props: Props) {
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envRT = pmrem.fromScene(new RoomEnvironment(), 0.04);
     scene.environment = envRT.texture;
+    // Dim the image-based reflections — at full strength the lit RoomEnvironment
+    // mirrors across the floor as a blinding white wash. We keep just enough for sheen.
+    scene.environmentIntensity = 0.35;
 
     const camera = new THREE.PerspectiveCamera(72, width / height, 0.1, 100);
 
     // ── lighting ──
     const ambient = new THREE.AmbientLight(0x2a3350, 0.4);
     scene.add(ambient);
-    const lamp = new THREE.SpotLight(0xffe2b0, 220, 26, Math.PI / 5.5, 0.5, 1.6);
+    const lamp = new THREE.SpotLight(0xffe2b0, 150, 26, Math.PI / 5.5, 0.5, 1.6);
     lamp.position.set(0, 8.5, 0);
     lamp.castShadow = true;
     lamp.shadow.mapSize.set(2048, 2048);
@@ -534,8 +538,9 @@ export default function TribunalScene(props: Props) {
     scene.add(fx);
 
     // ── environment ──
-    // polished reflective floor
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96), new THREE.MeshStandardMaterial({ color: 0x04050a, roughness: 0.14, metalness: 0.92 }));
+    // dark satin floor — roughened from a near-mirror so the overhead lamp no longer
+    // reflects as a blown-out hotspot; it keeps a soft sheen instead of a glare.
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(60, 96), new THREE.MeshStandardMaterial({ color: 0x04050a, roughness: 0.45, metalness: 0.5 }));
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
@@ -630,7 +635,9 @@ export default function TribunalScene(props: Props) {
     // ── post-processing ──
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.75, 0.7, 0.62);
+    // Bloom kept subtle: only genuinely bright highlights (high threshold) bleed, and
+    // gently (low strength), so the scene reads crisp instead of washed-out.
+    const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.3, 0.5, 0.85);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
@@ -1137,11 +1144,21 @@ export default function TribunalScene(props: Props) {
           s.head.rotation.z = lerpNum(s.head.rotation.z, tilt, 0.06);
         }
 
-        // awake allies get a soft pulse; sleeping town go dark.
-        const glowI = talking ? 0.45 + Math.sin(t * 18) * 0.2 : p.accusedId === s.id ? 0.5 : isAlly ? 0.22 + Math.sin(t * 5) * 0.08 : 0;
-        if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, glowI, 0.12);
-        // the chest sigil breathes with a base glow, brightening when speaking
-        if (s.alive && s.accentMat) s.accentMat.emissiveIntensity = lerpNum(s.accentMat.emissiveIntensity, sleeping ? 0.04 : 0.3 + glowI * 1.2, 0.1);
+        // Speaking seat glows with the ACTUAL voice: its emissive tracks live audio
+        // loudness, so it pulses HARD in time with the words. When muted / no audio
+        // graph, it falls back to a gentle idle pulse so the speaker still reads active.
+        // Awake allies get a soft pulse; sleeping town go dark.
+        const voiceLvl = talking && p.getAudioLevel ? p.getAudioLevel() : 0;
+        const voicing = talking && voiceLvl > 0.015;
+        const glowI = talking
+          ? voicing
+            ? 0.35 + voiceLvl * 3.2 // big swing so the speaker visibly throbs with its voice
+            : 0.45 + Math.sin(t * 12) * 0.14
+          : p.accusedId === s.id ? 0.5 : isAlly ? 0.22 + Math.sin(t * 5) * 0.08 : 0;
+        // Track the voice fast when speaking (so the pulse is crisp), ease elsewhere.
+        if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, glowI, voicing ? 0.4 : 0.12);
+        // the chest sigil breathes with a base glow, flaring brightly with the voice
+        if (s.alive && s.accentMat) s.accentMat.emissiveIntensity = lerpNum(s.accentMat.emissiveIntensity, sleeping ? 0.04 : 0.3 + glowI * 1.6, voicing ? 0.4 : 0.1);
 
         // who voted to kill this seat (Mafia, at night, from your seat only)
         const killVoters = !isSpectator && p.phase === 'NIGHT' && p.myRole === 'mafia' ? p.killVotes?.[s.id] : undefined;
@@ -1157,7 +1174,8 @@ export default function TribunalScene(props: Props) {
           rm.opacity = 0.4;
         } else if (talking) {
           rm.color.set(0x5fd0ff);
-          rm.opacity = 0.42 + Math.sin(t * 16) * 0.1;
+          // Ring brightness rides the voice too — wide open on loud syllables.
+          rm.opacity = voicing ? Math.min(1, 0.4 + voiceLvl * 1.4) : 0.42 + Math.sin(t * 16) * 0.1;
         } else if (isKillTarget) {
           rm.color.set(0xe0454f);
           rm.opacity = 0.5 + Math.sin(t * 7) * 0.14;
