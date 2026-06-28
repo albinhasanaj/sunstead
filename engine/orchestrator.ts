@@ -114,6 +114,9 @@ export async function runGame(
 
   const winner = def.winner(state) ?? 'draw';
   state.winner = winner;
-  emit({ type: 'win', winner });
+  // Unmask every seat with the result — the game is over, so hidden roles become
+  // public for the endgame reveal. This is the one place the full role map is allowed
+  // onto the wire (the play-mode filter hides roles right up until this moment).
+  emit({ type: 'win', winner, roles: state.players.map((p) => ({ id: p.id, role: p.role })) });
   return winner;
 }

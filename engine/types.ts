@@ -124,4 +124,7 @@ export type GameEvent =
   // A night role is about to act now (anonymous — role only, never who). Lets the
   // UI narrate "the Detective wakes up" exactly when they actually do.
   | { type: 'wake'; role: string }
-  | { type: 'win'; winner: string };
+  // Game over. The hidden game is decided, so every seat's true role is now public —
+  // `roles` carries the full unmasking for the endgame reveal cutscene. (Safe to send
+  // unfiltered: it fires exactly once, after the win condition is met.)
+  | { type: 'win'; winner: string; roles?: { id: PlayerId; role: string }[] };

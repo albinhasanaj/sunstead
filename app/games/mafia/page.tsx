@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Eye, EyeOff, Users, ScrollText, LogOut, Timer, SkipForward, Gavel, Check, Target } from 'lucide-react';
 import TribunalScene from './TribunalScene';
 import { useMafiaGame } from './useMafiaGame';
@@ -9,6 +9,8 @@ import { FLOAT_BTN, ROLE_STYLE } from './constants';
 import type { MafiaConfig, PresetName } from '@/games/mafia/config';
 import AnnouncementBanner from './_components/AnnouncementBanner';
 import DeathScreen from './_components/DeathScreen';
+import EndgameOverlay from './_components/EndgameOverlay';
+import GameRecap from './_components/GameRecap';
 import IntroOverlay from './_components/IntroOverlay';
 import MafiaChannel from './_components/MafiaChannel';
 import MenuOverlay from './_components/MenuOverlay';
@@ -35,6 +37,15 @@ export default function Home() {
   const [revealRoles, setRevealRoles] = useState(true);
   // Guards the Leave-game button so a stray click can't drop you out of a live round.
   const [confirmLeave, setConfirmLeave] = useState(false);
+  // Endgame flow: 'reveal' = the camera-orbit cutscene + title card, 'recap' = the
+  // scorecard, null = done (the lobby/game-over menu shows). Holds the menu back so the
+  // ending plays out instead of snapping straight to "play again".
+  const [endStage, setEndStage] = useState<null | 'reveal' | 'recap'>(null);
+  // Dev-only cutscene triggers: force the endgame reveal (a faked winner) and replay a
+  // night/dawn transition beat, without waiting for the engine. Stripped in production.
+  const isDev = process.env.NODE_ENV !== 'production';
+  const [devWinner, setDevWinner] = useState<string | null>(null);
+  const [devPulse, setDevPulse] = useState<{ dir: number; n: number } | null>(null);
 
   // Everything that touches the engine — game state, audio pacing, phase timers,
   // and the derived view-model — lives in this one hook.
@@ -47,6 +58,8 @@ export default function Home() {
     selected,
     setSelected,
     winner,
+    fate,
+    humanVotes,
     running,
     mode,
     humanId,
@@ -68,6 +81,7 @@ export default function Home() {
     deathReady,
     spectating,
     spectate,
+    devSimulateEnd,
     mafiaChance,
     me,
     myRole,
@@ -94,6 +108,45 @@ export default function Home() {
     sendSpeech,
     signalComposing,
   } = useMafiaGame();
+
+  // The real winner, or a dev-forced one for testing the endgame cutscene.
+  const endWinner = winner ?? devWinner;
+
+  // When a winner lands, open the reveal cutscene (the scene plays the orbit + unmask
+  // regardless; this just holds the lobby menu back until the player moves on).
+  useEffect(() => {
+    if (endWinner) setEndStage('reveal');
+  }, [endWinner]);
+
+  // ── Endgame recap data (derived from the now-public roles + tracked outcomes) ──
+  // Computed from the human's SEAT, not `mode`, so it survives a death→spectate flip.
+  const youPlayer = humanId ? players.find((p) => p.id === humanId) ?? null : null;
+  const youWon = youPlayer
+    ? endWinner === 'mafia'
+      ? youPlayer.role === 'mafia'
+      : endWinner === 'village'
+      ? youPlayer.role !== 'mafia'
+      : null
+    : null;
+  const recapTable = players.map((p) => ({ id: p.id, name: p.name, role: p.role, alive: p.alive, fate: fate[p.id] }));
+  const mafiaIds = new Set(players.filter((p) => p.role === 'mafia').map((p) => p.id));
+  const distinctVotes = Array.from(new Set(humanVotes));
+  const voteStat = distinctVotes.length
+    ? { total: distinctVotes.length, onMafia: distinctVotes.filter((id) => mafiaIds.has(id)).length }
+    : null;
+
+  // Restart the same mode from the recap; mirrors the menu's play/watch entry.
+  const playAgain = () => {
+    setEndStage(null);
+    setDevWinner(null);
+    if (mode === 'watch') {
+      setIntro('watch');
+      start('watch', undefined, configPatch);
+    } else {
+      setIntro('play');
+      start('play', devRole, configPatch);
+    }
+  };
 
   // A "target-pick" turn = a night action (kill/investigate/protect) or the vote:
   // you click a face, then a single confirm button appears. There's no talking on
@@ -142,6 +195,8 @@ export default function Home() {
           speakerEmotion={speakerEmotion}
           speakerIntensity={speakerIntensity}
           lookingAtId={lookingAtId}
+          gameOver={endWinner}
+          devPulse={devPulse}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />
@@ -267,7 +322,7 @@ export default function Home() {
       {/* full-screen menu — doubles as the entry and game-over screen. Held back
           while your death screen is up so a round that ended *with* your death shows
           the death screen first, not a jarring jump to the menu. */}
-      {!running && !eliminated && (
+      {!running && !eliminated && !endStage && (
         <MenuOverlay
           winner={winner}
           devRole={devRole}
@@ -279,11 +334,39 @@ export default function Home() {
           mafiaChance={mafiaChance}
           onPlay={() => {
             setIntro('play');
+            setEndStage(null);
+            setDevWinner(null);
             start('play', devRole, configPatch);
           }}
           onWatch={() => {
             setIntro('watch');
+            setEndStage(null);
+            setDevWinner(null);
             start('watch', undefined, configPatch);
+          }}
+        />
+      )}
+
+      {/* endgame reveal — the cinematic title card over the camera-orbit cutscene while
+          every role is unmasked; Continue advances to the scorecard. Held back when you
+          died (the DeathScreen owns that beat until you choose to spectate). */}
+      {endWinner && endStage === 'reveal' && !eliminated && (
+        <EndgameOverlay winner={endWinner} humanWon={youWon} onContinue={() => setEndStage('recap')} />
+      )}
+
+      {/* post-game scorecard — who was who, your game, your vote accuracy. */}
+      {endWinner && endStage === 'recap' && !eliminated && (
+        <GameRecap
+          winner={endWinner}
+          youWon={youWon}
+          you={youPlayer ? { name: youPlayer.name, role: youPlayer.role, survived: youPlayer.alive, fate: fate[youPlayer.id] } : null}
+          table={recapTable}
+          rounds={phase?.round ?? 1}
+          voteStat={voteStat}
+          onPlayAgain={playAgain}
+          onLobby={() => {
+            setEndStage(null);
+            setDevWinner(null); // clear a dev-forced ending so the live game resumes
           }}
         />
       )}
@@ -343,6 +426,33 @@ export default function Home() {
         <div className="pointer-events-none absolute bottom-11 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-neutral-700/60 bg-neutral-950/75 px-4 py-2 text-xs tracking-wide text-neutral-300 backdrop-blur">
           <Target className="h-3.5 w-3.5 text-neutral-400" />
           {pickPrompt}
+        </div>
+      )}
+
+      {/* dev-only cutscene triggers — replay the transitions / endgame reveal without
+          waiting on the engine. Only while a game is live (the scene needs seats).
+          Stripped from production builds via the isDev guard. */}
+      {isDev && running && !endWinner && (
+        <div className="absolute bottom-3 left-3 z-50 flex flex-col gap-1">
+          <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-amber-400/60">dev · recap</span>
+          <div className="flex flex-wrap gap-1">
+            {[
+              // fill any hidden roles + seed votes first, so the reveal/recap is populated
+              // even in play mode (real games reveal roles via the win event).
+              { label: 'Recap: Town win', onClick: () => { devSimulateEnd(); setDevWinner('village'); } },
+              { label: 'Recap: Mafia win', onClick: () => { devSimulateEnd(); setDevWinner('mafia'); } },
+              { label: 'Night beat', onClick: () => setDevPulse((d) => ({ dir: -1, n: (d?.n ?? 0) + 1 })) },
+              { label: 'Dawn beat', onClick: () => setDevPulse((d) => ({ dir: 1, n: (d?.n ?? 0) + 1 })) },
+            ].map((b) => (
+              <button
+                key={b.label}
+                onClick={b.onClick}
+                className="rounded border border-neutral-700/70 bg-neutral-950/80 px-2 py-1 text-[10px] tracking-wide text-neutral-300 backdrop-blur transition hover:border-amber-400/50 hover:text-amber-100"
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

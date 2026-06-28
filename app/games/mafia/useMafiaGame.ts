@@ -21,6 +21,10 @@ export function useMafiaGame() {
   const [phase, setPhase] = useState<{ phase: string; round: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
+  // Endgame recap data: how each seat met its end (for the unmasking list), and every
+  // face the human voted to lynch (for their personal vote-accuracy stat).
+  const [fate, setFate] = useState<Record<string, 'killed' | 'lynched'>>({});
+  const [humanVotes, setHumanVotes] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [mode, setMode] = useState<'watch' | 'play'>('watch');
   const [gameId, setGameId] = useState<string | null>(null);
@@ -284,6 +288,7 @@ export function useMafiaGame() {
           // Mark them dead. The role is present on the wire only when the game reveals
           // it (config.revealRoleOnDeath) or it's your own death — otherwise it stays secret.
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) } : p)));
+          setFate((m) => ({ ...m, [e.target]: 'killed' }));
           setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ''}` }]);
           showAnnounce({ eyebrow: 'Killed in the night', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('death');
@@ -291,6 +296,7 @@ export function useMafiaGame() {
           break;
         case 'reveal':
           setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) } : p)));
+          setFate((m) => ({ ...m, [e.target]: 'lynched' }));
           setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ''}` }]);
           showAnnounce({ eyebrow: 'Voted out by the table', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('reveal');
@@ -344,13 +350,20 @@ export function useMafiaGame() {
           // rather than a stale "your turn" — we'll be offered the floor again later.
           setTurn((t) => (t && t.agent === e.agent ? null : t));
           break;
-        case 'win':
+        case 'win': {
           voice.reset();
           setWinner(e.winner);
+          // Unmask every seat for the endgame reveal: fold the now-public roles into
+          // player state so the scene can flip their true allegiance up overhead.
+          if (e.roles?.length) {
+            const roleById = new Map<string, string>((e.roles as { id: string; role: string }[]).map((r) => [r.id, r.role]));
+            setPlayers((ps) => ps.map((p) => (roleById.has(p.id) ? { ...p, role: roleById.get(p.id)! } : p)));
+          }
           setFeed((f) => [...f, { k: 'win', winner: e.winner }]);
           playSfx('win');
           if (musicRef.current) musicRef.current.volume = 0.05;
           break;
+        }
         case 'done':
           setTurn(null);
           break;
@@ -370,6 +383,8 @@ export function useMafiaGame() {
       setPlayers([]);
       setFeed([]);
       setWinner(null);
+      setFate({});
+      setHumanVotes([]);
       setPhase(null);
       setTurn(null);
       setSelected(null);
@@ -470,6 +485,8 @@ export function useMafiaGame() {
         setFeed((f) => [...f, { k: 'system', text: `🛡 You protected ${nameOf(args.target)} tonight.` }]);
       }
       if (tool === 'investigate') setFeed((f) => [...f, { k: 'system', text: `🔎 You investigated ${nameOf(args.target)}…` }]);
+      // Remember who you voted to lynch, for the endgame recap's vote-accuracy stat.
+      if (tool === 'vote' && args.target) setHumanVotes((v) => [...v, args.target]);
       // Show your own kill vote immediately (the engine echoes it back too).
       if (tool === 'mafia_propose_kill' && humanId && args.target) setKillVotesByAgent((m) => ({ ...m, [humanId]: args.target }));
       try {
@@ -538,6 +555,31 @@ export function useMafiaGame() {
     armDeathScreen('killed', { target: id });
     postControl({ control: 'suicide' }); // tell the loop to drop our seat so it continues
   }, [nameOf, showAnnounce, playSfx, armDeathScreen, postControl]);
+
+  // Dev/testing only: populate plausible roles for any STILL-HIDDEN seats (and seed a
+  // couple of your votes) so the endgame recap + reveal have real data to show without
+  // playing a game to completion. Known roles (watch mode) are left untouched.
+  const devSimulateEnd = useCallback(() => {
+    if (!players.length) return;
+    let mafiaLeft = Math.max(1, Math.round(players.length / 4)) - players.filter((p) => p.role === 'mafia').length;
+    let needDet = !players.some((p) => p.role === 'detective');
+    let needDoc = !players.some((p) => p.role === 'doctor');
+    const next = players.map((p) => {
+      if (p.role !== 'unknown') return p;
+      let role = 'villager';
+      if (mafiaLeft > 0) { role = 'mafia'; mafiaLeft -= 1; }
+      else if (needDet) { role = 'detective'; needDet = false; }
+      else if (needDoc) { role = 'doctor'; needDoc = false; }
+      return { ...p, role };
+    });
+    setPlayers(next);
+    const hid = humanIdRef.current;
+    if (hid) {
+      const others = next.filter((p) => p.id !== hid);
+      const votes = [others.find((p) => p.role === 'mafia')?.id, others.find((p) => p.role !== 'mafia')?.id].filter(Boolean) as string[];
+      if (votes.length) setHumanVotes(votes);
+    }
+  }, [players]);
 
   const myTurn = turn && humanId && turn.agent === humanId ? turn : null;
   const me = humanId ? players.find((p) => p.id === humanId) : null;
@@ -684,6 +726,8 @@ export function useMafiaGame() {
     selected,
     setSelected,
     winner,
+    fate,
+    humanVotes,
     running,
     mode,
     humanId,
@@ -707,6 +751,7 @@ export function useMafiaGame() {
     spectating,
     spectate,
     suicide,
+    devSimulateEnd,
     mafiaChance,
     // derived view-model
     me,

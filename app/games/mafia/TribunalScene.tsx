@@ -58,6 +58,13 @@ export type Props = {
   speakerEmotion?: string | null;
   speakerIntensity?: number;
   lookingAtId?: string | null;
+  // Endgame: the winning faction (e.g. 'town' | 'mafia' | 'draw') once the game is
+  // decided, else null. Non-null triggers the reveal cutscene — the camera lifts into
+  // a slow orbit of the table and every seat's true role is unmasked overhead.
+  gameOver?: string | null;
+  // Dev-only: fire a night(-1)/dawn(+1) transition beat on each new `n` (so the page's
+  // dev buttons can replay the punctuation without an actual phase change).
+  devPulse?: { dir: number; n: number } | null;
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -1134,6 +1141,13 @@ export default function TribunalScene(props: Props) {
     let reactUntil = 0; // a death just landed → brief table-wide startle until this t
     const reactAt = new THREE.Vector3(); // where the death happened (others glance toward it)
 
+    // ── cinematic state ──
+    let prevPhase = ''; // detect phase changes → a short transition "beat"
+    let transUntil = 0; // bloom/fog/camera punctuation decays until this t
+    let transDir = 0; // +1 = brighten (dawn/vote), -1 = darken (dusk)
+    let prevPulseN = 0; // last dev-pulse nonce seen (so a button re-fires the beat)
+    const cineAim = new THREE.Vector3(); // scratch: endgame orbit camera position
+
     function animate() {
       raf = requestAnimationFrame(animate);
       t += 0.0015;
@@ -1147,11 +1161,12 @@ export default function TribunalScene(props: Props) {
         if (!controlsReady) {
           camera.position.copy(eye); // seed from the default spectator vantage
           controls.target.set(0, 1.05, 0);
-          controls.enabled = true;
-          controls.update();
           controlsReady = true;
         }
-        controls.update();
+        // Suspend free-look during the endgame orbit, then hand control back (so a
+        // subsequent watch game can orbit again — don't leave them stuck disabled).
+        controls.enabled = !p.gameOver;
+        if (controls.enabled) controls.update();
       } else {
         // Play mode: locked first-person from your seat; the mouse pans/tilts.
         if (controls.enabled) controls.enabled = false;
@@ -1166,10 +1181,41 @@ export default function TribunalScene(props: Props) {
         camera.lookAt(aim);
       }
 
+      // ── phase-transition beat: each time the phase flips, fire a short punctuation
+      // (a bloom flare on dawn/vote, a fog surge into dusk, a gentle camera bob) so the
+      // change lands as a moment instead of a silent cross-fade. ──
+      if (p.phase !== prevPhase) {
+        if (prevPhase) {
+          transUntil = t + 0.16; // ~1s window (t advances ~0.0015/frame)
+          transDir = p.phase === 'NIGHT' ? -1 : 1; // dusk darkens, dawn/vote brighten
+        }
+        prevPhase = p.phase;
+      }
+      // dev: replay a transition beat on demand (page dev buttons bump `n`)
+      if (p.devPulse && p.devPulse.n !== prevPulseN) {
+        prevPulseN = p.devPulse.n;
+        transUntil = t + 0.16;
+        transDir = p.devPulse.dir;
+      }
+      const transK = t < transUntil ? (transUntil - t) / 0.16 : 0; // 1 → 0 across the beat
+      // a soft bob on the first-person eye (skip during the endgame orbit below)
+      if (transK > 0 && !p.gameOver) camera.position.y += Math.sin(transK * Math.PI) * transDir * 0.1;
+
+      // ── endgame reveal: lift the camera off your seat into a slow orbit of the whole
+      // table while every role is unmasked overhead. Overrides the first-person lock and
+      // the spectator controls for a clean, hands-off cinematic. ──
+      if (p.gameOver) {
+        const ang = Math.PI / 2 + t * 1.6; // slow revolution (t≈0.09/s → ~0.14 rad/s)
+        cineAim.set(Math.cos(ang) * R * 1.95, 3.0, Math.sin(ang) * R * 1.95);
+        camera.position.lerp(cineAim, 0.03); // ease in from wherever we were, then track
+        camera.lookAt(0, 1.05, 0);
+      }
+
       // ease lights/fog/bloom/background toward the role-filtered target
       const fog = scene.fog as THREE.FogExp2;
       fog.color.lerp(cFog.set(v.fog), 0.06);
       fog.density += (v.fogD - fog.density) * 0.06;
+      if (transK > 0 && transDir < 0) fog.density += transK * 0.05; // dusk rolls in thicker
       (scene.background as THREE.Color).lerp(cBg.set(v.bg), 0.06);
       ambient.color.lerp(cAmb.set(v.amb), 0.06);
       ambient.intensity += (v.ambI - ambient.intensity) * 0.06;
@@ -1178,6 +1224,8 @@ export default function TribunalScene(props: Props) {
       rim.color.lerp(cRim.set(v.rim), 0.06);
       rim.intensity += (v.rimI - rim.intensity) * 0.06;
       bloom.strength += (v.bloom - bloom.strength) * 0.06;
+      // dawn/vote flare on top of the eased baseline (decays with the beat)
+      if (transK > 0 && transDir > 0) bloom.strength += transK * 0.5;
 
       // ── binaural audio: listener = camera, panner = the speaking seat ──
       // So a voice arrives from the speaker's actual direction (left seat → left ear),
@@ -1458,10 +1506,13 @@ export default function TribunalScene(props: Props) {
         // knowledge, made obvious. In watch mode the spectator reveal (toggleable)
         // surfaces every seat's TRUE role, so you can watch the Mafia lie.
         if (s.tag && s.tagMat) {
-          let want = isSpectator
-            ? p.revealRoles
-              ? roleTagFor(s.role)
-              : null
+          // Endgame unmasks EVERY seat regardless of mode; otherwise watch-mode honours
+          // the spectator reveal toggle and play-mode shows only your own private reads.
+          const revealAll = !!p.gameOver || (isSpectator && p.revealRoles);
+          let want = revealAll
+            ? roleTagFor(s.role)
+            : isSpectator
+            ? null
             : tagFor(s.id, p.findings, p.teammates, p.protectedId);
           // kill-vote marker takes over a town target's tag during the Mafia night
           if (!want && isKillTarget) want = { text: `⚔ ${killVoters!.join('·')}`, color: '#e0454f' };
