@@ -121,6 +121,7 @@ export default function LobbySettings({
           <Toggle label="Memory recall" hint="AIs search this game's earlier statements (pgvector) to catch contradictions." value={resolved.enableMemoryRecall} onChange={(v) => set('enableMemoryRecall', v)} />
           <Toggle label="Reactive discussion" hint="Whoever most wants the floor speaks next, instead of a fixed seat order." value={resolved.reactiveDiscussion} onChange={(v) => set('reactiveDiscussion', v)} />
           <Toggle label="Live urge (paid)" hint="Poll each AI's own model for how badly it wants to talk. Costs extra API calls." value={resolved.liveUrge} onChange={(v) => set('liveUrge', v)} />
+          <Toggle label="Hero lines (v3, paid)" hint="The rare, most intense line gets a richer, higher-latency voice (eleven_v3). Capped per round; normal lines stay fast." value={resolved.heroLineModel === 'eleven_v3'} onChange={(v) => set('heroLineModel', v ? 'eleven_v3' : undefined)} />
           <Toggle label="Parallel night" hint="Resolve all night actions at once instead of one at a time (faster)." value={resolved.parallelNight} onChange={(v) => set('parallelNight', v)} />
           <Toggle label="Parallel vote" hint="Collect all votes simultaneously instead of in turn (faster)." value={resolved.parallelVote} onChange={(v) => set('parallelVote', v)} />
           <div className="sm:col-span-2">

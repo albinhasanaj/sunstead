@@ -33,6 +33,9 @@ export function useMafiaGame() {
   // The line currently being VOICED (driven by the audio queue when voice is on),
   // so the caption/heads match what you're hearing rather than racing ahead of it.
   const [speakingLine, setSpeakingLine] = useState<{ who: string; text: string } | null>(null);
+  // The current speaker's PUBLIC expression (emotion + intensity + who they're looking
+  // at), synced to the line actually playing — drives body language + gaze in the scene.
+  const [speakerExpr, setSpeakerExpr] = useState<{ emotion: string; intensity: number; lookingAt: string | null } | null>(null);
   // True when nothing is queued/playing — used to hold your turn until the table
   // has finished talking, so you're never asked to chime in over a backlog.
   const [voiceIdle, setVoiceIdle] = useState(true);
@@ -112,6 +115,12 @@ export function useMafiaGame() {
     deathTimerRef.current = setTimeout(() => setDeathReady(true), 2400);
   }, []);
 
+  // Stage 5 hero-line gating (config-driven, client-side so it knows the round + cap).
+  // heroCfg comes from the server-echoed config; heroUsed resets each new round.
+  const heroCfgRef = useRef<{ model?: string; minIntensity: number; perRound: number } | null>(null);
+  const heroUsedRef = useRef(0);
+  const heroRoundRef = useRef(0);
+
   const abortRef = useRef<AbortController | null>(null);
   const feedEndRef = useRef<HTMLDivElement | null>(null);
   const playersRef = useRef<Player[]>([]);
@@ -159,9 +168,11 @@ export function useMafiaGame() {
       onStart: (item) => {
         setSpeakingId(item.id);
         setSpeakingLine({ who: item.id, text: item.text });
+        setSpeakerExpr({ emotion: item.emotion ?? 'neutral', intensity: item.intensity ?? 0.4, lookingAt: item.lookingAt ?? null });
       },
       onEnd: (item) => {
         setSpeakingId((cur) => (cur === item.id ? null : cur));
+        setSpeakerExpr(null); // next line's onStart sets it again; gaze relaxes between lines
         ackVoiceDone(); // a voiced AI line just finished → let the loop play the next beat
       },
       onIdle: (v) => setVoiceIdle(v),
@@ -177,6 +188,14 @@ export function useMafiaGame() {
           setHumanId(e.humanId);
           // Honor the server-resolved config (e.g. voiceEnabled may have been clamped).
           if (e.config && typeof e.config.voiceEnabled === 'boolean') setVoiceOn(e.config.voiceEnabled);
+          // Stage 5: capture the hero-line gating config (off unless heroLineModel set).
+          if (e.config) {
+            heroCfgRef.current = {
+              model: typeof e.config.heroLineModel === 'string' ? e.config.heroLineModel : undefined,
+              minIntensity: Number.isFinite(e.config.heroLineMinIntensity) ? e.config.heroLineMinIntensity : 0.85,
+              perRound: Number.isFinite(e.config.heroLinesPerRound) ? e.config.heroLinesPerRound : 1,
+            };
+          }
           break;
         case 'setup': {
           setPlayers(e.players.map((p: Player) => ({ ...p, alive: true })));
@@ -202,6 +221,7 @@ export function useMafiaGame() {
         }
         case 'phase': {
           voice.reset(); // drop any leftover spoken backlog before the phase turns over
+          if (e.round !== heroRoundRef.current) { heroRoundRef.current = e.round; heroUsedRef.current = 0; } // new round → refill the hero cap
           setPhase({ phase: e.phase, round: e.round });
           setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
@@ -221,17 +241,30 @@ export function useMafiaGame() {
             return [...f, { k: 'speak', who: e.agent, text: e.text }];
           });
           if (!isHuman && soundOnRef.current) {
+            // Stage 5 gate: a rare decisive line gets the richer v3 read IF the config
+            // enables it, the line clears the intensity threshold, and this round's cap
+            // isn't spent. Everything else stays on the fast flash path (Stage 1).
+            const hc = heroCfgRef.current;
+            const intensity = typeof e.intensity === 'number' ? e.intensity : 0.4;
+            let hero = false;
+            if (hc?.model && intensity >= hc.minIntensity && heroUsedRef.current < hc.perRound) {
+              hero = true;
+              heroUsedRef.current += 1;
+            }
             // Voice on (AI line): the audio queue paces the caption + speaking head,
-            // one line at a time, so the floor never jumps ahead to the next model.
-            voice.enqueue({ id: e.agent, name: nameOf(e.agent), text: e.text });
+            // one line at a time, so the floor never jumps ahead to the next model. The
+            // expression rides the item so it lands exactly when this line plays.
+            voice.enqueue({ id: e.agent, name: nameOf(e.agent), text: e.text, emotion: e.emotion, intensity: e.intensity, lookingAt: e.lookingAt, hero });
           } else {
             // Your OWN line (no need to read it back to you) or a muted AI line: no
             // audio to pace against — hold the caption a readable, text-length beat.
             setSpeakingId(e.agent);
             setSpeakingLine({ who: e.agent, text: e.text });
+            setSpeakerExpr({ emotion: e.emotion ?? 'neutral', intensity: e.intensity ?? 0.4, lookingAt: e.lookingAt ?? null });
             if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
             speakTimerRef.current = setTimeout(() => {
               setSpeakingId((cur) => (cur === e.agent ? null : cur));
+              setSpeakerExpr(null);
               if (!isHuman) ackVoiceDone(); // muted: pace the next AI beat to reading speed
             }, Math.max(2000, (e.text?.length ?? 0) * 60));
           }
@@ -337,6 +370,7 @@ export function useMafiaGame() {
       setSelected(null);
       setSpeakingId(null);
       setSpeakingLine(null);
+      setSpeakerExpr(null);
       setVoiceIdle(true);
       setThinkingIds([]);
       setNightWake(null);
@@ -691,6 +725,10 @@ export function useMafiaGame() {
     // Binaural audio nodes (panner + listener) for the scene to pose each frame, so a
     // line is heard FROM the speaking seat's direction. Stable getter; null until audio starts.
     getSpatial: voice.getSpatial,
+    // Current speaker's public expression → body language + gaze in the 3D scene.
+    speakerEmotion: speakerExpr?.emotion ?? null,
+    speakerIntensity: speakerExpr?.intensity ?? 0,
+    lookingAtId: speakerExpr?.lookingAt ?? null,
     start,
     submitAction,
     skipTurn,

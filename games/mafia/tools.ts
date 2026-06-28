@@ -4,9 +4,61 @@ import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
 import { remember } from '../../lib/memory';
 import { resolveConfig, type MafiaConfig } from './config';
+import { EMOTIONS, coerceEmotion, coerceIntensity } from '../../voice/emotion';
 
 // Resolved config off live state (spec §2). Role-rule gates below read from here.
 const cfg = (state: GameState): MafiaConfig => (state.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
+
+// ── the one PUBLIC expression signal, attached to every spoken action ───────────
+// emotion + intensity + (optional) who you're looking at. It rides the public speak
+// event only — it exposes nothing hidden, so it changes no §9 boundary. The same
+// signal fans out to the voice (delivery) and the client (body language).
+const EXPRESSION_FIELDS = {
+  emotion: z
+    .enum(EMOTIONS)
+    .optional()
+    .describe('How you deliver this line — your visible, audible mood. One of: ' + EMOTIONS.join(', ') + '. Defaults to neutral.'),
+  intensity: z.number().min(0).max(1).optional().describe('How strongly you feel it: 0 = flat/calm, 1 = at full pitch. Most lines sit 0.3–0.6.'),
+  lookingAt: z.string().optional().describe('A living player you are addressing / looking at, by name (optional).'),
+} as const;
+
+// The first LIVING player (other than the speaker) named in a line — so the scene can
+// turn the speaker's head and point at whoever they actually bring up, even when the
+// model didn't fill lookingAt. Matched on a name token (non-letter boundaries).
+function mentionedTarget(ctx: ToolContext, text: string): AgentState | undefined {
+  const hay = ` ${text.toLowerCase()} `;
+  let best: AgentState | undefined;
+  let bestIdx = Infinity;
+  for (const p of ctx.state.players) {
+    if (!p.alive || p.id === ctx.agent.id) continue;
+    const n = p.name.toLowerCase();
+    const idx = hay.indexOf(n);
+    if (idx < 0 || idx >= bestIdx) continue;
+    const before = hay[idx - 1];
+    const after = hay[idx + n.length];
+    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) { bestIdx = idx; best = p; }
+  }
+  return best;
+}
+
+// Build the public expression payload for a speak event. Fail-safe: invalid values
+// degrade to neutral/0.4; an unresolved lookingAt is dropped. Gaze/point target order:
+// explicit lookingAt → fallbackLook (accuse target / direct call-out) → first player
+// named in the spoken text — so mentioning someone aims at them.
+function expressionFor(
+  ctx: ToolContext,
+  args: { emotion?: unknown; intensity?: unknown; lookingAt?: unknown },
+  fallbackLook?: AgentState,
+  text?: string,
+) {
+  const look = typeof args.lookingAt === 'string' ? resolve(ctx.state, args.lookingAt, { aliveOnly: true }) : undefined;
+  const at = (look && look.id !== ctx.agent.id ? look : fallbackLook) ?? (text ? mentionedTarget(ctx, text) : undefined);
+  return {
+    emotion: coerceEmotion(args.emotion),
+    intensity: coerceIntensity(args.intensity),
+    ...(at ? { lookingAt: at.id } : {}),
+  };
+}
 
 // Resolve a player the model referred to by name (preferred) or id.
 function resolve(state: GameState, ref: string, opts: { aliveOnly?: boolean } = {}): AgentState | undefined {
@@ -132,11 +184,14 @@ const speak: GameTool = {
       .string()
       .optional()
       .describe('Optional: a living player to put on the spot with this line. They must answer next. One per round.'),
+    ...EXPRESSION_FIELDS,
   }),
   legalIn: inPhase(PHASE.DISCUSSION),
   execute: async (args, ctx) => {
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: args.text });
-    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: args.text });
+    // If they named a "to" target but no explicit lookingAt, they're looking at them.
+    const toRef = typeof args.to === 'string' ? resolve(ctx.state, args.to, { aliveOnly: true }) : undefined;
+    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: args.text, ...expressionFor(ctx, args, toRef, args.text) });
     await recordPublic(ctx, args.text);
 
     // Direct call-out: if a valid target is named and the caller is off cooldown, put
@@ -163,6 +218,7 @@ const accuse: GameTool = {
   inputSchema: z.object({
     target: z.string().describe('The player you accuse, by name.'),
     reason: z.string().describe('Why you think they are Mafia — said aloud.'),
+    ...EXPRESSION_FIELDS,
   }),
   legalIn: inPhase(PHASE.DISCUSSION),
   execute: async (args, ctx) => {
@@ -175,13 +231,14 @@ const accuse: GameTool = {
       const line = (args.reason ?? '').trim();
       if (!line) return 'No valid player to accuse — skip the accusation and speak instead.';
       ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
-      ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
+      ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line, ...expressionFor(ctx, args, undefined, line) });
       await recordPublic(ctx, line);
       return 'You spoke (no valid accusation target). Your turn is over.';
     }
     const line = `I think ${t.name} is Mafia. ${args.reason}`;
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
-    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
+    // An accusation defaults its gaze to the accused (you're looking right at them).
+    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line, ...expressionFor(ctx, args, t, line) });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'accuse', target: t.id });
     await recordPublic(ctx, line);
     // An accusation puts the accused on the spot — they get the next word to defend.
@@ -198,6 +255,7 @@ const defend: GameTool = {
   inputSchema: z.object({
     target: z.string().optional().describe('Who you defend, by name. Omit to defend yourself.'),
     argument: z.string().describe('Your defense — said aloud.'),
+    ...EXPRESSION_FIELDS,
   }),
   legalIn: inPhase(PHASE.DISCUSSION),
   execute: async (args, ctx) => {
@@ -205,7 +263,7 @@ const defend: GameTool = {
     const who = t && t.id !== ctx.agent.id ? `${t.name} is not Mafia. ` : '';
     const line = `${who}${args.argument}`;
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
-    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
+    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line, ...expressionFor(ctx, args, undefined, line) });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'defend', target: t?.id });
     await recordPublic(ctx, line);
     return 'You made your defense. Your turn is over.';
@@ -219,12 +277,13 @@ const claimRole: GameTool = {
   inputSchema: z.object({
     role: z.string().describe('The role you claim (e.g. villager, detective, doctor).'),
     statement: z.string().describe('What you say as you make the claim, aloud.'),
+    ...EXPRESSION_FIELDS,
   }),
   legalIn: inPhase(PHASE.DISCUSSION),
   execute: async (args, ctx) => {
     const line = `I'm the ${args.role}. ${args.statement}`;
     ctx.state.publicLog.push({ speaker: ctx.agent.id, text: line });
-    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line });
+    ctx.emit({ type: 'speak', agent: ctx.agent.id, text: line, ...expressionFor(ctx, args, undefined, line) });
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'claim_role' });
     await recordPublic(ctx, line);
     return 'You made your claim. Your turn is over.';

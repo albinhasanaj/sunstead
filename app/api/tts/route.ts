@@ -1,6 +1,6 @@
 import { synthesize, TTS_MODEL } from '@/voice/tts';
 import { DEFAULT_VOICE, voiceFor } from '@/voice/voiceMap';
-import { coerceEmotion, coerceIntensity, type Expression } from '@/voice/emotion';
+import { coerceEmotion, coerceIntensity, v3TagFor, type Expression } from '@/voice/emotion';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,13 +24,22 @@ export async function POST(req: Request) {
       ? { emotion: coerceEmotion(body.emotion), intensity: coerceIntensity(body.intensity) }
       : undefined;
 
+  // Stage 5 — hero line: the CLIENT gates this (config on + intensity over threshold +
+  // per-round cap not spent) and sets body.hero. ONLY here, on the v3 path, do we derive
+  // and PREFIX an audio tag from the emotion. Tags are v3-only — they would be read aloud
+  // on flash, so the flash path never sees them. Everything else stays flash + Stage 1.
+  const hero = body?.hero === true;
+  const heroModel = hero ? 'eleven_v3' : undefined;
+  const tag = hero && expression ? v3TagFor(expression.emotion) : null;
+  const synthText = tag ? `${tag} ${text}` : text;
+
   const tryVoice = async (vid: string) => {
-    const audio = await synthesize(vid, text, { expression });
+    const audio = await synthesize(vid, synthText, { expression, modelId: heroModel });
     return new Response(new Blob([audio as BlobPart], { type: 'audio/mpeg' }), {
       headers: {
         'Content-Type': 'audio/mpeg',
         'Cache-Control': 'no-store',
-        'X-TTS-Model': TTS_MODEL,
+        'X-TTS-Model': heroModel || TTS_MODEL,
       },
     });
   };

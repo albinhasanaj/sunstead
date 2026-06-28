@@ -104,7 +104,10 @@ export type GameEvent =
       bid?: { pressure: number; holding: string; triggers: string[]; round: number; beat: number };
     }
   | { type: 'thinking'; agent: PlayerId; on: boolean } // seat is mid-deliberation — for a "thinking…" UI and to visualise concurrent thinking
-  | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string }
+  // The PUBLIC expression signal rides the spoken line (never the private beliefs
+  // event): emotion + intensity drive voice delivery and body language; lookingAt is
+  // a resolved player id the speaker is addressing. Engine treats them as opaque.
+  | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string; emotion?: string; intensity?: number; lookingAt?: PlayerId }
   | { type: 'whisper'; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)
   | { type: 'action'; agent: PlayerId; kind: string; target?: PlayerId }
   | { type: 'knowledge'; agent: PlayerId; target: PlayerId; result: string; text: string } // private finding (e.g. Detective)

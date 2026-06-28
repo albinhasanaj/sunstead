@@ -84,6 +84,9 @@ export default function Home() {
     nameOf,
     getAudioLevel,
     getSpatial,
+    speakerEmotion,
+    speakerIntensity,
+    lookingAtId,
     start,
     submitAction,
     skipTurn,
@@ -125,7 +128,7 @@ export default function Home() {
           myRole={myRole}
           speakingId={speakingId}
           thinkingId={mode === 'play' && phase?.phase === 'NIGHT' ? null : (thinkingIds[0] ?? null)}
-          accusedId={selected && selected !== humanId ? selected : null}
+          selectedId={selected && selected !== humanId ? selected : null}
           turn={turn}
           findings={findings}
           teammates={teammates}
@@ -136,6 +139,9 @@ export default function Home() {
           revealRoles={mode === 'watch' && revealRoles}
           getAudioLevel={getAudioLevel}
           getSpatial={getSpatial}
+          speakerEmotion={speakerEmotion}
+          speakerIntensity={speakerIntensity}
+          lookingAtId={lookingAtId}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />

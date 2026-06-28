@@ -52,8 +52,11 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
   // prefixed with their name). Hand THAT agent the floor for the next beat — one
   // guaranteed answer — instead of whoever merely scores highest. It clears after
   // firing, so normal urge-based scheduling resumes and the table still reacts. This
-  // overrides the budget/skip below so a direct question always gets a direct answer.
-  if (d.directTo) {
+  // overrides the normal budget so a direct question gets a direct answer — but only up
+  // to a HARD ceiling, so a table that puts someone on the spot every beat (e.g. accuse
+  // → answer → accuse) still ends the day instead of looping forever.
+  const hardCap = d.budget + living.length;
+  if (d.directTo && d.beat < hardCap) {
     const target = living.find((p) => p.id === d.directTo && !p.private.human);
     d.directTo = null;
     if (target && target.id !== d.last) {

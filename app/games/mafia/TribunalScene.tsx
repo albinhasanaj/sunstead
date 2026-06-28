@@ -32,7 +32,11 @@ export type Props = {
   myRole: string; // 'mafia' | 'villager' | 'detective' | 'doctor' | 'unknown'
   speakingId: string | null;
   thinkingId?: string | null; // seat mid-deliberation → "pondering" body language
-  accusedId: string | null;
+  // The face the HUMAN has picked (your action target / pointer selection). This is a
+  // private UI highlight ONLY — it brightens the seat's ring so you can see your pick.
+  // It deliberately does NOT make the table look at them, jerk their head, or stop the
+  // current speaker: pointing at someone is not the same as the room accusing them.
+  selectedId: string | null;
   turn: any | null; // raw request_action payload, or null
   onSelect: (playerId: string) => void;
   onAction: (tool: string, args: any) => void;
@@ -49,6 +53,11 @@ export type Props = {
   // panner sits at the speaking seat, so voices come FROM their seat (left/right ears).
   // lowpass + wet are modulated by distance for a natural "across the room" feel.
   getSpatial?: () => { panner: PannerNode; listener: AudioListener; lowpass: BiquadFilterNode; wet: GainNode } | null;
+  // Current speaker's PUBLIC expression → body language (Stage 4): emotion + intensity
+  // pose the speaker; lookingAtId aims their gaze (else they look at the table).
+  speakerEmotion?: string | null;
+  speakerIntensity?: number;
+  lookingAtId?: string | null;
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -415,6 +424,53 @@ function lerpAngle(a: number, b: number, t: number) {
   while (d < -Math.PI) d += 2 * Math.PI;
   return a + d * t;
 }
+// Cheap layered-sine "noise" for organic idle drift (no deps; deterministic per phase).
+const noise1 = (x: number) => Math.sin(x) * 0.6 + Math.sin(x * 2.3 + 1.7) * 0.3 + Math.sin(x * 0.7 + 4.1) * 0.1;
+
+// Stage 4 — emotion → a full additive POSE + a gesture STYLE for the speaking avatar
+// (consumes the public expression). Pure animation, zero API cost. Channels:
+//   lean      spine forward(+)/back(-)
+//   shoulder  shoulder/arm tension raise (hunch)
+//   head      head down(+)/up(-)
+//   tilt      head roll (cock)
+//   jitter    high-freq fidget amount
+//   gesture   overall gesture-amplitude multiplier
+//   armOpen   how high/forward the hands sit while gesturing (open vs. guarded)
+// Gesture style controls the SHAPE of the hand motion (speed/sharpness/one-arm bias).
+type Pose = { lean: number; shoulder: number; head: number; tilt: number; jitter: number; gesture: number; armOpen: number };
+const EMOTION_POSE: Record<string, Pose> = {
+  neutral: { lean: 0, shoulder: 0, head: 0, tilt: 0, jitter: 0.04, gesture: 1, armOpen: 0 },
+  confident: { lean: 0.06, shoulder: -0.04, head: -0.06, tilt: 0, jitter: 0, gesture: 1.2, armOpen: 0.12 },
+  suspicious: { lean: 0.05, shoulder: 0.05, head: 0.04, tilt: 0.1, jitter: 0.12, gesture: 0.9, armOpen: -0.02 },
+  defensive: { lean: -0.1, shoulder: 0.14, head: 0.06, tilt: 0.02, jitter: 0.22, gesture: 0.85, armOpen: -0.16 },
+  nervous: { lean: -0.05, shoulder: 0.11, head: 0.08, tilt: 0.05, jitter: 0.55, gesture: 0.8, armOpen: -0.08 },
+  aggressive: { lean: 0.17, shoulder: 0.05, head: -0.09, tilt: 0, jitter: 0.3, gesture: 1.5, armOpen: 0.18 },
+  smug: { lean: -0.06, shoulder: -0.06, head: -0.12, tilt: 0.14, jitter: 0, gesture: 1.05, armOpen: 0.06 },
+  panicked: { lean: -0.12, shoulder: 0.16, head: 0.05, tilt: 0.07, jitter: 0.9, gesture: 1.0, armOpen: -0.12 },
+  amused: { lean: 0.0, shoulder: -0.04, head: -0.05, tilt: 0.11, jitter: 0.15, gesture: 1.15, armOpen: 0.07 },
+};
+// Hand-motion shape per emotion: speed (osc freq), amp (swing), sharp (0 = smooth sine →
+// 1 = chopping jabs), asym (0 = both arms equal → 1 = mostly one arm), base (resting lift).
+type Gesture = { speed: number; amp: number; sharp: number; asym: number; base: number };
+const EMOTION_GESTURE: Record<string, Gesture> = {
+  neutral: { speed: 5, amp: 0.16, sharp: 0, asym: 0.15, base: -0.3 },
+  confident: { speed: 4.5, amp: 0.24, sharp: 0.1, asym: 0.1, base: -0.36 },
+  suspicious: { speed: 5.5, amp: 0.15, sharp: 0.25, asym: 0.55, base: -0.3 },
+  defensive: { speed: 6, amp: 0.12, sharp: 0.1, asym: 0.0, base: -0.62 },
+  nervous: { speed: 11, amp: 0.1, sharp: 0.05, asym: 0.35, base: -0.24 },
+  aggressive: { speed: 7, amp: 0.32, sharp: 0.75, asym: 0.35, base: -0.44 },
+  smug: { speed: 3.5, amp: 0.15, sharp: 0, asym: 0.8, base: -0.28 },
+  panicked: { speed: 13, amp: 0.14, sharp: 0.2, asym: 0.2, base: -0.22 },
+  amused: { speed: 4, amp: 0.22, sharp: 0, asym: 0.45, base: -0.3 },
+};
+
+// A seat's mutually-exclusive activity on the floor, derived once per frame (see the
+// render loop). Every animation channel branches on this single value instead of
+// re-deriving an implicit talking>thinking>listening precedence ladder. NOTE: the
+// Mafia-night `sleeping` dimming is deliberately NOT a member here — it's an
+// orthogonal modifier that different channels order against `talking` differently,
+// so it stays its own flag. Emotion, voice loudness, and pose also layer on top.
+type AvatarMode = 'dead' | 'speaking' | 'thinking' | 'listening' | 'idle';
 
 // One built seat (an AI figure). The human seat has `figure:false` (no mesh — the
 // camera sits there) but still carries a position so others can look at "you".
@@ -427,6 +483,10 @@ type Seat = {
   bodyYaw: number;
   grp: THREE.Group | null;
   body: THREE.Group | null; // torso group (yaw-oriented) — animated for gestures
+  armL: THREE.Group | null; // left upper arm, pivots at the shoulder
+  armR: THREE.Group | null; // right upper arm
+  foreL: THREE.Group | null; // left forearm, pivots at the elbow (bends → natural motion)
+  foreR: THREE.Group | null; // right forearm
   head: THREE.Group | null;
   skull: THREE.Mesh | null;
   animPhase: number; // per-seat offset so idle motion is desynced
@@ -736,7 +796,7 @@ export default function TribunalScene(props: Props) {
 
         if (human) {
           // You ARE the camera — no figure, just a seat record so others look at you.
-          const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, body: null, head: null, skull: null, animPhase: 0, skinMat: null, bodyMat: null, accentMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+          const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, body: null, armL: null, armR: null, foreL: null, foreR: null, head: null, skull: null, animPhase: 0, skinMat: null, bodyMat: null, accentMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
           seats.push(seat);
           seatById.set(pl.id, seat);
           return;
@@ -792,17 +852,37 @@ export default function TribunalScene(props: Props) {
         // back pack / spine unit
         addMesh(new THREE.BoxGeometry(0.34, 0.5, 0.16), metalMat).position.set(0, 1.12, -0.22);
 
-        // shoulders → upper arm → elbow → forearm → hand resting on the table rim
+        // Articulated TWO-BONE arm: a shoulder group (upper arm) with an elbow subgroup
+        // (forearm + hand) nested inside it, so the elbow BENDS — the forearm follows the
+        // upper arm with lag for natural, non-stiff motion. Geometry is built so that with
+        // both groups un-rotated the hand rests on the table rim exactly as before.
+        const arms: (THREE.Group | null)[] = [null, null]; // [left(-1), right(+1)] shoulder groups
+        const fores: (THREE.Group | null)[] = [null, null]; // forearm (elbow) groups
         for (const sgn of [-1, 1]) {
-          addMesh(new THREE.SphereGeometry(0.16, 18, 14), metalMat).position.set(sgn * 0.42, 1.34, 0);
-          const pauldron = addMesh(new THREE.SphereGeometry(0.21, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.5), bodyMat);
-          pauldron.position.set(sgn * 0.42, 1.36, 0);
-          const elbow = new THREE.Vector3(sgn * 0.52, 1.0, 0.3);
-          addLimb(new THREE.Vector3(sgn * 0.42, 1.32, 0), elbow, 0.1, bodyMat);
-          addMesh(new THREE.SphereGeometry(0.1, 14, 12), accentMat).position.copy(elbow);
-          const hand = new THREE.Vector3(sgn * 0.3, 0.5, 0.86); // rests on the table edge
-          addLimb(elbow, hand, 0.085, bodyMat);
-          addMesh(new THREE.BoxGeometry(0.17, 0.1, 0.24), metalMat).position.copy(hand);
+          const shoulderPos = new THREE.Vector3(sgn * 0.42, 1.34, 0);
+          const elbowLocal = new THREE.Vector3(sgn * 0.1, -0.34, 0.3); // relative to the shoulder
+          const handRelElbow = new THREE.Vector3(-sgn * 0.12, -0.84, 0.86).sub(elbowLocal); // forearm in elbow space
+
+          const arm = new THREE.Group();
+          arm.position.copy(shoulderPos);
+          bodyGrp.add(arm);
+          const put = (mesh: THREE.Mesh, parent: THREE.Object3D) => { mesh.castShadow = true; figGeo.push(mesh.geometry); parent.add(mesh); return mesh; };
+
+          // shoulder ball + pauldron + upper arm (shoulder → elbow), in arm-local space
+          put(new THREE.Mesh(new THREE.SphereGeometry(0.16, 18, 14), metalMat), arm);
+          put(new THREE.Mesh(new THREE.SphereGeometry(0.21, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.5), bodyMat), arm).position.set(0, 0.02, 0);
+          put(limbBetween(new THREE.Vector3(0, -0.02, 0), elbowLocal, 0.1, bodyMat), arm);
+
+          // forearm group pivots AT the elbow; forearm + hand built in elbow-local space
+          const fore = new THREE.Group();
+          fore.position.copy(elbowLocal);
+          arm.add(fore);
+          put(new THREE.Mesh(new THREE.SphereGeometry(0.1, 14, 12), accentMat), fore); // elbow joint at origin
+          put(limbBetween(new THREE.Vector3(0, 0, 0), handRelElbow, 0.085, bodyMat), fore);
+          put(new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.1, 0.24), metalMat), fore).position.copy(handRelElbow); // hand
+
+          arms[sgn < 0 ? 0 : 1] = arm;
+          fores[sgn < 0 ? 0 : 1] = fore;
         }
 
         // neck (gunmetal)
@@ -885,7 +965,7 @@ export default function TribunalScene(props: Props) {
           thinkTex, thinkMat, thinkGeo,
         );
 
-        const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, body: bodyGrp, head, skull, animPhase: i * 1.7, skinMat, bodyMat, accentMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+        const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, body: bodyGrp, armL: arms[0], armR: arms[1], foreL: fores[0], foreR: fores[1], head, skull, animPhase: i * 1.7, skinMat, bodyMat, accentMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
         // a figure built already-dead (e.g. reconnect) starts collapsed, no replay
         if (!pl.alive) {
           const outward = new THREE.Vector3(x, 0, z).normalize();
@@ -1050,6 +1130,10 @@ export default function TribunalScene(props: Props) {
     let t = 0;
     let raf = 0;
 
+    // ── Stage 4 body-language transient state (t advances ~0.09/sec) ──
+    let reactUntil = 0; // a death just landed → brief table-wide startle until this t
+    const reactAt = new THREE.Vector3(); // where the death happened (others glance toward it)
+
     function animate() {
       raf = requestAnimationFrame(animate);
       t += 0.0015;
@@ -1119,14 +1203,22 @@ export default function TribunalScene(props: Props) {
         spatial.wet.gain.value += (wetAmt - spatial.wet.gain.value) * 0.1;
       }
 
-      // whoever holds the floor (accused first, else current speaker) is the focus
-      const focus = p.accusedId ? seatById.get(p.accusedId) : p.speakingId ? seatById.get(p.speakingId) : undefined;
+      // The current speaker holds the floor → the room's gaze focus. (Your private
+      // pick, `selectedId`, intentionally does NOT pull focus — see the prop comment.)
+      const focus = p.speakingId ? seatById.get(p.speakingId) : undefined;
       const hide = v.hide;
       fx.visible = !hide;
 
       // Mafia night ritual: from a Mafia seat, the town is "asleep" (dimmed, heads
       // bowed) while your allies stay lit — the digital "open your eyes" moment.
       const mafiaNight = !isSpectator && p.phase === 'NIGHT' && p.myRole === 'mafia';
+
+      // ── Stage 4: current speaker's public expression → pose + gaze ──
+      const speakerEmotion = p.speakerEmotion ?? 'neutral';
+      const speakerK = Math.max(0, Math.min(1, p.speakerIntensity ?? 0));
+      const pose = EMOTION_POSE[speakerEmotion] ?? EMOTION_POSE.neutral;
+      const gest = EMOTION_GESTURE[speakerEmotion] ?? EMOTION_GESTURE.neutral;
+      const lookId = p.lookingAtId ?? null;
 
       for (const s of seats) {
         if (!s.grp || !s.head || !s.ring || !s.label) continue; // human seat = no figure
@@ -1147,6 +1239,9 @@ export default function TribunalScene(props: Props) {
             const outward = new THREE.Vector3(s.pos.x, 0, s.pos.z).normalize();
             s.fallAxis = new THREE.Vector3().crossVectors(UP, outward).normalize();
             spawnSoulBurst(s);
+            // The table recoils: a brief startle + everyone glances at the fallen seat.
+            reactUntil = t + 0.055;
+            reactAt.set(s.pos.x, 1.4, s.pos.z);
           }
           if (s.deathAnim < 1) s.deathAnim = Math.min(1, s.deathAnim + 0.02);
           const e = 1 - Math.pow(1 - s.deathAnim, 3); // easeOutCubic
@@ -1163,47 +1258,164 @@ export default function TribunalScene(props: Props) {
             s.accentMat.emissive.lerp(cAmb.set(0x101216), 0.08);
           }
         } else {
-          // turn head toward the focal person; the focal person looks at the table
-          let yaw = s.bodyYaw;
-          if (focus && focus.id !== s.id) {
+          // ── GAZE: head leads toward the focal person; the speaker looks at whoever
+          // they're addressing; a death snaps a startled glance; idle micro-saccades,
+          // organic drift, and the occasional brief look-away keep eyes alive. ──
+          const ph0 = s.animPhase;
+          const isSpk = p.speakingId === s.id;
+          let yaw = s.bodyYaw; // default: face the table centre
+          let snap = 0.08;
+          if (t < reactUntil && !isSpk) {
+            yaw = Math.atan2(reactAt.x - s.pos.x, reactAt.z - s.pos.z); // startled glance at the death
+            snap = 0.22;
+          } else if (isSpk && lookId && lookId !== s.id) {
+            const tg = seatById.get(lookId);
+            if (tg) { const tp = headWorld(tg); yaw = Math.atan2(tp.x - s.pos.x, tp.z - s.pos.z); }
+          } else if (focus && focus.id !== s.id) {
             const tp = headWorld(focus);
             yaw = Math.atan2(tp.x - s.pos.x, tp.z - s.pos.z);
           }
-          s.head.rotation.y = lerpAngle(s.head.rotation.y, yaw, 0.07);
+          const sacc = Math.sin(t * 13 + ph0) > 0.985 ? 0.1 * (ph0 % 2 < 1 ? 1 : -1) : 0; // micro-dart
+          const drift = noise1(t * 4 + ph0) * 0.05; // organic drift
+          const lookAway = !isSpk && noise1(t * 0.6 + ph0 * 2.1) > 0.82 ? 0.32 * (ph0 % 2 < 1 ? 1 : -1) : 0; // brief glance off
+          s.head.rotation.y = lerpAngle(s.head.rotation.y, yaw + drift + sacc + lookAway, snap);
         }
 
-        const talking = !p.accusedId && p.speakingId === s.id && s.alive;
-        const thinking = s.alive && !talking && !sleeping && p.thinkingId === s.id;
-        // sleeping town bow their heads; talkers nod; thinkers glance down a touch.
-        const headPitch = sleeping ? 0.5 : talking ? Math.sin(t * 34) * 0.05 : thinking ? 0.1 : 0;
-        if (s.alive) s.head.rotation.x = lerpNum(s.head.rotation.x, headPitch, sleeping ? 0.08 : 0.18);
+        // ── Activity mode: the single source of truth for this seat's floor state.
+        // Priority is declared here, once, instead of being smeared across each
+        // channel's ternaries: dead → speaking → thinking → listening → idle. A
+        // sleeping seat can still be `speaking` (matching the old behaviour), but is
+        // never `thinking`/`listening` — those branches exclude it. ──
+        const mode: AvatarMode = !s.alive
+          ? 'dead'
+          : p.speakingId === s.id
+          ? 'speaking'
+          : !sleeping && p.thinkingId === s.id
+          ? 'thinking'
+          : !sleeping && !!focus && focus.id !== s.id
+          ? 'listening'
+          : 'idle';
+        const talking = mode === 'speaking';
+        const thinking = mode === 'thinking';
+        const listening = mode === 'listening';
+        const ph = s.animPhase;
+        // Live voice loudness of the current line (0..1) — drives the glow + gestures.
+        const voiceLvl = talking && p.getAudioLevel ? p.getAudioLevel() : 0;
+        const voicing = talking && voiceLvl > 0.015;
+        // Emotion pose applies to the SPEAKER only, scaled by intensity.
+        const poseK = talking ? speakerK : 0;
+        const g = 1 + (pose.gesture - 1) * poseK; // gesture-amplitude multiplier
+        // a touch of nervous fidget (or a baseline micro-tremor at rest) on every seat.
+        const fidget = (talking ? pose.jitter * poseK : sleeping ? 0 : 0.04) * Math.sin(t * 34 + ph) * 0.02;
 
-        // ── expressive body language (alive only) ──
+        // ── HEAD pitch: sleeping bow; talker nods with the voice; thinker looks down;
+        // listener gives small agreement nods; + the emotion's head up/down. ──
+        const listenNod = listening ? Math.max(0, noise1(t * 1.6 + ph * 3)) * 0.06 : 0;
+        const headPitch =
+          (sleeping ? 0.5 : talking ? voiceLvl * 0.06 + Math.sin(t * 15 + ph) * 0.012 : thinking ? 0.12 : listenNod) + pose.head * poseK + fidget;
+        if (s.alive) s.head.rotation.x = lerpNum(s.head.rotation.x, headPitch, sleeping ? 0.08 : talking ? 0.2 : 0.12);
+
+        // ── TORSO: constant breathing + slow weight shift (never frozen); lean in to
+        // talk (+ the emotion lean), lean toward the speaker while listening, slump asleep. ──
         if (s.alive && s.body) {
-          const ph = s.animPhase;
-          // torso: lean in to speak, ponder-sway while thinking, gentle breathing at rest
-          const leanX = talking ? 0.12 + Math.sin(t * 7 + ph) * 0.025 : thinking ? 0.06 : sleeping ? 0.07 : 0;
-          const swayZ = talking ? Math.sin(t * 4 + ph) * 0.045 : thinking ? Math.sin(t * 2.1 + ph) * 0.06 : Math.sin(t * 0.8 + ph) * 0.014;
-          s.body.rotation.x = lerpNum(s.body.rotation.x, leanX, 0.07);
+          const breathe = (Math.sin(t * 5.5 + ph) * 0.5 + 0.5) * 0.012;
+          const wshift = noise1(t * 1.8 + ph * 1.3) * 0.035;
+          const listenLean = listening ? 0.05 : 0;
+          const leanX = (talking ? 0.08 + Math.sin(t * 6 + ph) * 0.02 * g : thinking ? 0.07 : sleeping ? 0.08 : listenLean) + pose.lean * poseK + fidget;
+          const swayZ = (talking ? Math.sin(t * 4 + ph) * 0.04 * g : thinking ? Math.sin(t * 2 + ph) * 0.05 : Math.sin(t * 0.7 + ph) * 0.02) + wshift;
+          s.body.rotation.x = lerpNum(s.body.rotation.x, leanX, 0.06);
           s.body.rotation.z = lerpNum(s.body.rotation.z, swayZ, 0.05);
-          const bob = Math.sin(t * (talking ? 9 : 1.1) + ph) * (talking ? 0.013 : 0.006);
+          const bob = Math.sin(t * (talking ? 8 : 1.1) + ph) * (talking ? 0.012 : 0.005) + breathe;
           s.body.position.y = lerpNum(s.body.position.y, bob, 0.1);
-          // head: cock to one side while deliberating
-          const tilt = thinking ? 0.16 + Math.sin(t * 1.6 + ph) * 0.04 : 0;
-          s.head.rotation.z = lerpNum(s.head.rotation.z, tilt, 0.06);
+          const tilt = (thinking ? 0.18 + Math.sin(t * 1.5 + ph) * 0.04 : listening ? Math.sin(t * 0.9 + ph) * 0.05 : 0) + pose.tilt * poseK;
+          s.head.rotation.z = lerpNum(s.head.rotation.z, tilt, 0.05);
+        }
+
+        // ── ARMS (two-bone): the shoulder leads and the ELBOW bends with lag, so the
+        // forearm whips through naturally instead of swinging like a stick. Emotion sets
+        // the gesture style (speed/sharpness/asymmetry) and resting attitude; amplitude
+        // rides the live voice. Brief point when naming someone; hand-to-chin to think. ──
+        if (s.alive && s.armL && s.armR && s.foreL && s.foreR) {
+          // The speaker's gaze/point target for THIS line (whoever they named/addressed).
+          // Pointing is BLENDED INTO the talking gesture and PULSES — so the gesturing
+          // hand drifts toward them through the whole line and emphasizes every couple of
+          // seconds, instead of a rigid aim or a one-shot at the wrong moment.
+          const target = talking && lookId && lookId !== s.id ? seatById.get(lookId) : null;
+          let tgtAng = 0;
+          if (target) { const raw = Math.atan2(target.pos.x - s.pos.x, target.pos.z - s.pos.z) - s.bodyYaw; tgtAng = Math.atan2(Math.sin(raw), Math.cos(raw)); }
+          const pointSide = target ? (tgtAng >= 0 ? 1 : -1) : 0; // which arm carries the point
+          const emph = target ? 0.32 + 0.68 * Math.max(0, Math.sin(t * 3.2 + ph)) : 0; // slow emphasis pulse
+          // resting attitudes while talking: tension hunches the shoulder; openness lifts
+          // the arm and straightens the elbow.
+          const shoulderLift = -0.32 - pose.shoulder * 0.45 - pose.armOpen * 0.22;
+          const elbowBend = -0.6 + pose.armOpen * 0.45;
+          for (const side of [-1, 1] as const) {
+            const arm = side < 0 ? s.armL : s.armR;
+            const fore = side < 0 ? s.foreL : s.foreR;
+            const dominant = side > 0; // right arm leads one-handed (asymmetric) gestures
+            const asym = 1 - gest.asym * (dominant ? 0 : 1);
+            const off = ph + (dominant ? 0 : 1.7);
+            let sx = 0, sy = 0, sz = 0; // shoulder
+            let ex = 0, ey = 0; // elbow (forearm)
+            if (talking) {
+              // CHILL conversational gesturing: slow, layered, smooth waves — the elbow
+              // does the expression, the shoulder gives a gentle lead. No audio coupling
+              // (that made the arms pump up/down on every syllable).
+              const lead = Math.sin(t * gest.speed + off) * 0.6 + Math.sin(t * gest.speed * 1.9 + off + 1.3) * 0.4;
+              const fwave = Math.sin(t * gest.speed * 1.25 + off + 0.9) * 0.7 + Math.sin(t * gest.speed * 2.4 + off) * 0.3;
+              sx = shoulderLift + lead * gest.amp * 0.45 * g * asym;
+              sy = Math.sin(t * gest.speed * 0.5 + ph) * 0.06 * g * asym;
+              sz = Math.sin(t * gest.speed * 0.45 + ph + side) * 0.08 * g * side * asym;
+              ex = elbowBend + fwave * gest.amp * 1.25 * g * asym;
+              ey = Math.sin(t * gest.speed * 0.6 + ph + 2) * 0.09 * g * asym;
+              // Blend THIS gesture toward a point on the target-side arm, pulsing with emph.
+              if (side === pointSide) {
+                const pb = emph * 0.72; // how far toward a full point (0..~0.72)
+                sx = lerpNum(sx, -0.92, pb);
+                sy = lerpNum(sy, THREE.MathUtils.clamp(tgtAng, -1.2, 1.2) * 0.9, pb);
+                sz = lerpNum(sz, 0, pb);
+                ex = lerpNum(ex, -0.14, pb); // straighten toward a real point
+                ey = lerpNum(ey, 0, pb);
+              }
+            } else if (thinking && dominant) {
+              sx = -0.7; sy = -0.4; sz = -0.1; // upper arm up & in
+              ex = -1.9; ey = 0.25; // sharply bent → hand to chin
+            } else if (sleeping) {
+              sx = 0.06; ex = 0.08; // slumped, hands low
+            } else {
+              // listening / idle: hands rest on the table with the faintest life.
+              sx = noise1(t * 0.9 + ph) * 0.02;
+              ex = Math.sin(t * 1.1 + ph * 2) * 0.03;
+            }
+            // Gentle easing → smooth, never snappy. The elbow trails the shoulder a touch,
+            // so the forearm follows through naturally.
+            const sRate = talking ? 0.08 : 0.06;
+            const eRate = talking ? 0.06 : 0.05;
+            arm.rotation.x = lerpNum(arm.rotation.x, sx, sRate);
+            arm.rotation.y = lerpNum(arm.rotation.y, sy, sRate);
+            arm.rotation.z = lerpNum(arm.rotation.z, sz, sRate);
+            fore.rotation.x = lerpNum(fore.rotation.x, ex, eRate);
+            fore.rotation.y = lerpNum(fore.rotation.y, ey, eRate);
+          }
+        }
+
+        // ── transient reactions (additive offsets after the lerps) ──
+        if (s.alive) {
+          if (t < reactUntil && !talking) {
+            const k = (reactUntil - t) / 0.055;
+            s.head.rotation.x += -0.12 * k; // table-wide startle recoil
+          }
         }
 
         // Speaking seat glows with the ACTUAL voice: its emissive tracks live audio
         // loudness, so it pulses HARD in time with the words. When muted / no audio
         // graph, it falls back to a gentle idle pulse so the speaker still reads active.
         // Awake allies get a soft pulse; sleeping town go dark.
-        const voiceLvl = talking && p.getAudioLevel ? p.getAudioLevel() : 0;
-        const voicing = talking && voiceLvl > 0.015;
         const glowI = talking
           ? voicing
             ? 0.35 + voiceLvl * 3.2 // big swing so the speaker visibly throbs with its voice
             : 0.45 + Math.sin(t * 12) * 0.14
-          : p.accusedId === s.id ? 0.5 : isAlly ? 0.22 + Math.sin(t * 5) * 0.08 : 0;
+          : p.selectedId === s.id ? 0.5 : isAlly ? 0.22 + Math.sin(t * 5) * 0.08 : 0;
         // Track the voice fast when speaking (so the pulse is crisp), ease elsewhere.
         if (s.skinMat) s.skinMat.emissiveIntensity = lerpNum(s.skinMat.emissiveIntensity, glowI, voicing ? 0.4 : 0.12);
         // the chest sigil breathes with a base glow, flaring brightly with the voice
@@ -1213,9 +1425,9 @@ export default function TribunalScene(props: Props) {
         const killVoters = !isSpectator && p.phase === 'NIGHT' && p.myRole === 'mafia' ? p.killVotes?.[s.id] : undefined;
         const isKillTarget = !!killVoters && killVoters.length > 0;
 
-        // ring colour: accused (amber) > dead (red) > speaking (cyan) > kill-target (red) > idle
+        // ring colour: your pick (amber) > dead (red) > speaking (cyan) > kill-target (red) > idle
         const rm = s.ring.material as THREE.MeshBasicMaterial;
-        if (p.accusedId === s.id) {
+        if (p.selectedId === s.id) {
           rm.color.set(0xf0b54a);
           rm.opacity = 0.5;
         } else if (!s.alive) {
@@ -1299,7 +1511,7 @@ export default function TribunalScene(props: Props) {
         let aimSeat: Seat | undefined;
         if (pickTool) {
           const hov = hoveredId ? seatById.get(hoveredId) : undefined;
-          aimSeat = hov && hov.alive && !hov.human ? hov : p.accusedId ? seatById.get(p.accusedId) : undefined;
+          aimSeat = hov && hov.alive && !hov.human ? hov : p.selectedId ? seatById.get(p.selectedId) : undefined;
         }
         if (aimSeat && aimSeat.grp) {
           const col = pickTool === 'mafia_propose_kill' ? 0xff4d4d : pickTool === 'investigate' ? 0x6fb4ff : pickTool === 'protect' ? 0x5fe0c8 : 0xf0b54a;
@@ -1491,11 +1703,11 @@ function ActionStyles() {
 // (DISCUSSION speech, mafia whispers) are handled by the page's ActionBar.
 type ActionDef = { tool: string; label: string; Icon: typeof Skull; danger?: boolean; targets: { id: string; name: string }[] };
 function ActionOverlay(props: Props) {
-  const { turn, accusedId, players, onAction } = props;
+  const { turn, selectedId, players, onAction } = props;
   // only the human's own turn drives buttons
   if (!turn || turn.agent !== props.myId) return null;
   const legal: string[] = turn.legal ?? [];
-  const sel = accusedId ? players.find((p) => p.id === accusedId) : null;
+  const sel = selectedId ? players.find((p) => p.id === selectedId) : null;
   const selName = sel?.name ?? '';
 
   const defs: ActionDef[] = [];
@@ -1507,7 +1719,7 @@ function ActionOverlay(props: Props) {
   // Only surface a button once a valid target is actually picked — there's no
   // empty/greyed "pick a target" state. Until then the bottom-center belongs to
   // the voice dock, whose hint line carries the "click a face" guidance.
-  const ready = defs.filter((d) => !!accusedId && d.targets.some((tg) => tg.id === accusedId));
+  const ready = defs.filter((d) => !!selectedId && d.targets.some((tg) => tg.id === selectedId));
 
   // Self-protect: you ARE the camera POV, so there's no face of your own to click.
   // When the doctor may shield themselves this night (self is in protectTargets —
@@ -1555,7 +1767,7 @@ function ActionOverlay(props: Props) {
         return (
           <button
             key={d.tool}
-            onClick={() => onAction(d.tool, { target: accusedId })}
+            onClick={() => onAction(d.tool, { target: selectedId })}
             data-kind={d.danger ? 'danger' : undefined}
             className={`tribunal-action${d.danger ? ' tribunal-action--danger' : ''}`}
           >

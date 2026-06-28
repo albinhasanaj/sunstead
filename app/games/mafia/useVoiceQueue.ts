@@ -2,7 +2,10 @@
 
 import { useCallback, useMemo, useRef } from 'react';
 
-export type VoiceItem = { id: string; name: string; text: string };
+// A line to voice. emotion/intensity drive ElevenLabs delivery (sent to /api/tts);
+// lookingAt rides along so the scene can aim the speaker's gaze when this line plays.
+// hero = a rare decisive line the client gated for the richer v3 model (Stage 5).
+export type VoiceItem = { id: string; name: string; text: string; emotion?: string; intensity?: number; lookingAt?: string; hero?: boolean };
 
 // Drives the spoken lines as audio, one at a time and in order, so voices never
 // overlap. TTS is fetched on demand from /api/tts. Critically, it also reports its
@@ -273,7 +276,9 @@ export function useVoiceQueue() {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent: item.name, text: item.text }),
+        // emotion/intensity → per-line voiceSettings (Stage 1). Absent → neutral default.
+        // hero (gated by the caller) → the richer v3 model + an audio tag (Stage 5).
+        body: JSON.stringify({ agent: item.name, text: item.text, emotion: item.emotion, intensity: item.intensity, hero: item.hero }),
       });
       if (enabled.current && res.ok && res.headers.get('content-type')?.includes('audio')) {
         const url = URL.createObjectURL(await res.blob());

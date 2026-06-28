@@ -46,6 +46,13 @@ export interface MafiaConfig {
   paceMaxMs: number;
   voiceEnabled: boolean;
 
+  // — Expressive "hero" lines (Stage 5) — a richer, higher-latency TTS model used
+  // ONLY for the occasional decisive line. Default OFF so the fast crossfire path is
+  // never touched. heroLineModel unset = off.
+  heroLineModel?: 'eleven_v3';
+  heroLineMinIntensity: number; // a line must be at least this intense to qualify
+  heroLinesPerRound: number; // hard cap per round so latency stays bounded
+
   // — Determinism (§10) —
   seed?: string; // a stable seed for reproducible replay; auto-generated if unset
 }
@@ -57,6 +64,10 @@ const clampInt = (v: unknown, lo: number, hi: number, dflt: number): number => {
   return Math.max(lo, Math.min(hi, n));
 };
 const bool = (v: unknown, dflt: boolean): boolean => (typeof v === 'boolean' ? v : dflt);
+const clampRange01 = (v: unknown, dflt: number): number => {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : dflt;
+};
 const oneOf = <T extends string>(v: unknown, allowed: readonly T[], dflt: T): T =>
   (typeof v === 'string' && (allowed as readonly string[]).includes(v) ? (v as T) : dflt);
 
@@ -110,6 +121,9 @@ const STATIC_DEFAULTS: Omit<MafiaConfig, 'tableSize' | 'mafiaCount' | 'enableDet
   turnDelayMs: 0,
   paceMaxMs: 14000,
   voiceEnabled: true,
+  // heroLineModel left unset (off) by default — opt-in only.
+  heroLineMinIntensity: 0.85,
+  heroLinesPerRound: 1,
 };
 
 // ── Presets (§2.3) — named partial patches the lobby applies in one click ──────
@@ -204,6 +218,10 @@ export function resolveConfig(input: Partial<MafiaConfig> = {}): MafiaConfig {
     turnDelayMs: clampInt(input.turnDelayMs, 0, 5000, seed.turnDelayMs as number),
     paceMaxMs: clampInt(input.paceMaxMs, 0, 30000, seed.paceMaxMs as number),
     voiceEnabled: bool(input.voiceEnabled, seed.voiceEnabled as boolean),
+    // Hero lines: only 'eleven_v3' enables them; anything else stays off (undefined).
+    heroLineModel: input.heroLineModel === 'eleven_v3' ? 'eleven_v3' : undefined,
+    heroLineMinIntensity: clampRange01(input.heroLineMinIntensity, seed.heroLineMinIntensity as number),
+    heroLinesPerRound: clampInt(input.heroLinesPerRound, 0, 5, seed.heroLinesPerRound as number),
     // Determinism: keep a provided seed, else generate one so EVERY game is replayable
     // (§10). This is the single allowed non-deterministic bootstrap.
     seed: typeof input.seed === 'string' && input.seed.trim() ? input.seed.trim() : newSeed(),
