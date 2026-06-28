@@ -78,7 +78,7 @@ export default function LobbySettings({
 
       {/* ── User-tier settings ────────────────────────────────────────── */}
       <div className="mt-4 space-y-3">
-        <Stepper label="Table size" value={resolved.tableSize} min={5} max={10} onChange={(n) => set('tableSize', n)} />
+        <Stepper label="Table size" value={resolved.tableSize} min={5} max={15} onChange={(n) => set('tableSize', n)} />
         <Stepper label="Mafia" value={resolved.mafiaCount} min={1} max={Math.max(1, Math.floor((resolved.tableSize - 1) / 2))} onChange={(n) => set('mafiaCount', n)} />
         <Stepper label="Discussion rounds" value={resolved.discussionRounds} min={1} max={4} onChange={(n) => set('discussionRounds', n)} />
 

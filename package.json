@@ -11,7 +11,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.1",
+    "@ai-sdk/openai": "^4.0.2",
     "@ai-sdk/openai-compatible": "3.0.1",
+    "@ai-sdk/xai": "^4.0.2",
     "@elevenlabs/elevenlabs-js": "^2.54.0",
     "@elevenlabs/react": "^1.8.0",
     "@modelcontextprotocol/sdk": "^1.29.0",

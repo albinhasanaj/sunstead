@@ -8,9 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@ai-sdk/anthropic':
+        specifier: ^4.0.1
+        version: 4.0.1(zod@4.4.3)
+      '@ai-sdk/openai':
+        specifier: ^4.0.2
+        version: 4.0.2(zod@4.4.3)
       '@ai-sdk/openai-compatible':
         specifier: 3.0.1
         version: 3.0.1(zod@4.4.3)
+      '@ai-sdk/xai':
+        specifier: ^4.0.2
+        version: 4.0.2(zod@4.4.3)
       '@elevenlabs/elevenlabs-js':
         specifier: ^2.54.0
         version: 2.54.0
@@ -84,6 +93,12 @@ importers:
 
 packages:
 
+  '@ai-sdk/anthropic@4.0.1':
+    resolution: {integrity: sha512-q9PMy0r3LGzSTu6FtYhFj6EesVpSpsEoPLsRKFnaK4YJd7SdUJlYIUJ4EXd5LTWzeXxk4r02z3gymo24c9jyQA==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/gateway@4.0.0':
     resolution: {integrity: sha512-rcKukspbM4h511ot2E8TsPl7rXjRK1zHKrMCP7w4+XF55UKqQHaDzo2kKbGv5rp8Bjb1yQatIHJZE1E2yrOOMw==}
     engines: {node: '>=22'}
@@ -92,6 +107,12 @@ packages:
 
   '@ai-sdk/openai-compatible@3.0.1':
     resolution: {integrity: sha512-nUbQoGzdFZspb1cr6GUy+nR8Uvdi4/lCwTkdE9qKe+Qr2OVPsIKRIpyC9ewJ2uqUfl+1JlkWhPfR5l8bokNs4Q==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/openai@4.0.2':
+    resolution: {integrity: sha512-/oxY+VpWgTrmqCOho1AD/jF5ZaHizkAEsrEVBhIHEzxSHpbJI0Ws8VSpfJPPBeTF7Ebz6eaNGOvKm2RzN5EcdQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -111,6 +132,12 @@ packages:
   '@ai-sdk/provider@4.0.0':
     resolution: {integrity: sha512-fr9Gs89prDWiuox/T+kCA+i2cJkHpxU5S+tr4megjTzRC27ZsvFhwjU/+XrqqMbvBUlfmXxTOYWy8ng45dsjIg==}
     engines: {node: '>=22'}
+
+  '@ai-sdk/xai@4.0.2':
+    resolution: {integrity: sha512-TuQfxzuRs434IOASKvsEtlXpphjeBy5+2H8SOwS4wT3RgMoXjXJMy0oIfUwTDb0m0xhLRwqbKHNcBHkpPVXBGg==}
+    engines: {node: '>=22'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   '@alloc/quick-lru@5.2.0':
     resolution: {integrity: sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw==}
@@ -2651,6 +2678,12 @@ packages:
 
 snapshots:
 
+  '@ai-sdk/anthropic@4.0.1(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.0
+      '@ai-sdk/provider-utils': 5.0.1(zod@4.4.3)
+      zod: 4.4.3
+
   '@ai-sdk/gateway@4.0.0(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 4.0.0
@@ -2659,6 +2692,12 @@ snapshots:
       zod: 4.4.3
 
   '@ai-sdk/openai-compatible@3.0.1(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/provider': 4.0.0
+      '@ai-sdk/provider-utils': 5.0.1(zod@4.4.3)
+      zod: 4.4.3
+
+  '@ai-sdk/openai@4.0.2(zod@4.4.3)':
     dependencies:
       '@ai-sdk/provider': 4.0.0
       '@ai-sdk/provider-utils': 5.0.1(zod@4.4.3)
@@ -2683,6 +2722,13 @@ snapshots:
   '@ai-sdk/provider@4.0.0':
     dependencies:
       json-schema: 0.4.0
+
+  '@ai-sdk/xai@4.0.2(zod@4.4.3)':
+    dependencies:
+      '@ai-sdk/openai-compatible': 3.0.1(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.0
+      '@ai-sdk/provider-utils': 5.0.1(zod@4.4.3)
+      zod: 4.4.3
 
   '@alloc/quick-lru@5.2.0': {}
 

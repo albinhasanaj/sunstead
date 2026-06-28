@@ -28,10 +28,16 @@ export interface Personality {
 
 export const PERSONALITIES: Personality[] = [
   // Closed-source seats route through the Vercel AI Gateway (AI_GATEWAY_API_KEY).
-  { name: 'GPT', model: 'openai/gpt-5.1-nano' },
-  { name: 'Claude', model: 'anthropic/claude-haiku-4.5' },
+  // Several labs field more than one tier, so the table can pit a flagship against
+  // its own lightweight sibling (GPT vs GPT-mini, Claude Opus vs Haiku, …).
+  { name: 'GPT', model: 'openai/gpt-5.4-nano' },
+  { name: 'GPTmini', model: 'openai/gpt-5.4-mini' },
+  { name: 'Claude', model: 'anthropic/claude-sonnet-4.5' },
+  { name: 'Opus', model: 'anthropic/claude-opus-4.5' },
+  { name: 'Haiku', model: 'anthropic/claude-haiku-4.5' },
   { name: 'Gemini', model: 'google/gemini-2.5-flash' },
-  { name: 'Grok', model: 'xai/grok-4.1-fast-non-reasoning' },
+  { name: 'GeminiPro', model: 'google/gemini-2.5-pro' },
+  { name: 'Grok', model: 'xai/grok-4.20-0309-non-reasoning' },
   // Open-weight seats route through Featherless (FEATHERLESS_API_KEY). IDs are the
   // HuggingFace org/repo the platform serves. DeepSeek keeps a tighter leash: it's
   // a large reasoning model and can blow past the global cap, so it fails over to
@@ -42,6 +48,7 @@ export const PERSONALITIES: Personality[] = [
   { name: 'Qwen', model: 'featherless/Qwen/Qwen3-235B-A22B' },
   { name: 'Llama', model: 'featherless/meta-llama/Llama-3.3-70B-Instruct' },
   { name: 'Mistral', model: 'featherless/mistralai/Mistral-Small-3.2-24B-Instruct-2506' },
+  { name: 'Gemma', model: 'featherless/google/gemma-3-27b-it' },
 ];
 
 // Look up a seat's default model by character name (case-insensitive).
@@ -49,9 +56,26 @@ export function personalityByName(name: string): Personality | undefined {
   return PERSONALITIES.find((p) => p.name.toLowerCase() === name.trim().toLowerCase());
 }
 
-// Default game roster — six seats so a full game features every role
-// (2 Mafia coordinating + a Detective + a Doctor + 2 Villagers).
-export const DEFAULT_ROSTER = ['GPT', 'Claude', 'Gemini', 'DeepSeek', 'Qwen', 'Grok'];
+// Default game roster — fifteen seats so a full Mafia table (3 Mafia coordinating +
+// a Detective + a Doctor + 10 Townspeople) features every distinct lab's model.
+// Headless callers (scripts/tests) get sliced down to config.tableSize in setup().
+export const DEFAULT_ROSTER = [
+  'GPT',
+  'GPTmini',
+  'Claude',
+  'Opus',
+  'Haiku',
+  'Gemini',
+  'GeminiPro',
+  'Grok',
+  'DeepSeek',
+  'Kimi',
+  'GLM',
+  'Qwen',
+  'Llama',
+  'Mistral',
+  'Gemma',
+];
 
 // Fallback model for any seat without an explicit one (e.g. a custom name).
 export const FALLBACK_MODEL = 'google/gemini-2.5-flash';

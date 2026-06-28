@@ -3,13 +3,20 @@
 // match each seat's personality. Any voiceId can be swapped in here.
 export const VOICES: Record<string, string> = {
   GPT: 'JBFqnCBsd6RMkjVDRZzb', // George — warm, captivating storyteller (the diplomat)
-  Claude: 'CwhRBWXzGAHq8TQ4Fs17', // Roger — laid-back, resonant (the measured analyst)
+  GPTmini: 'FGY2WhTYpPnrIDTdsKH5', // Laura — quicker, lighter GPT
+  Claude: 'CwhRBWXzGAHq8TQ4Fs17', // Roger — laid-back, resonant (the measured Sonnet)
+  Opus: 'IKne3meq5aSn9XLyUdCD', // Charlie — deep, weighty (the flagship)
+  Haiku: 'hpp4J3VqNfWAUOO0d1Us', // Bella — bright, brisk (the featherweight)
   Gemini: 'EXAVITQu4vr4xnSDxMaL', // Sarah — mature, confident (the know-it-all)
+  GeminiPro: 'JBFqnCBsd6RMkjVDRZzb', // George — fuller, deliberate Gemini
   DeepSeek: 'IKne3meq5aSn9XLyUdCD', // Charlie — deep, confident (the strategist)
   Qwen: '1Iztu4UHnTb9SUjJcpS1', // Anna — clear, melodic (the chameleon)
   Grok: 'FGY2WhTYpPnrIDTdsKH5', // Laura — quirky, enthusiast (the jokester)
   Llama: 'hpp4J3VqNfWAUOO0d1Us', // Bella — bright, warm (the open book)
   Mistral: 'IKne3meq5aSn9XLyUdCD', // Charlie — deep, blunt (the minimalist)
+  Kimi: 'EXAVITQu4vr4xnSDxMaL', // Sarah — confident (the moonshot)
+  GLM: 'CwhRBWXzGAHq8TQ4Fs17', // Roger — measured (the analyst)
+  Gemma: 'JBFqnCBsd6RMkjVDRZzb', // George — warm storyteller
   You: '1Iztu4UHnTb9SUjJcpS1', // Anna — the human seat
 };
 

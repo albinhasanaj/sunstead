@@ -81,8 +81,10 @@ function envDefaults(): Partial<MafiaConfig> {
 }
 
 // Default Mafia count for a table size when the caller doesn't pin it (§2.2).
+// Scales up to a big 15-seat table: 3 Mafia is the classic count there (with a
+// Detective + Doctor that leaves 10 Townspeople).
 export function defaultMafiaCount(tableSize: number): number {
-  return tableSize <= 5 ? 1 : tableSize <= 8 ? 2 : 3;
+  return tableSize <= 5 ? 1 : tableSize <= 8 ? 2 : tableSize <= 12 ? 3 : tableSize <= 15 ? 3 : 4;
 }
 
 // The static (non-env) defaults. Role/mafia defaults that depend on tableSize are
@@ -118,6 +120,9 @@ export const PRESETS: Record<string, Partial<MafiaConfig>> = {
   chaos: { mafiaCount: 3, tableSize: 9, discussionRounds: 1, dayVoteTie: 'random', liveUrge: true },
   speedrun: { discussionRounds: 1, parallelNight: true, parallelVote: true, turnDelayMs: 0, voiceEnabled: false },
   showcase: { voiceEnabled: true, paceMaxMs: 14000, turnDelayMs: 800, reactiveDiscussion: true },
+  // A full 15-seat table (3 Mafia, Detective, Doctor, 10 Townspeople) — the model
+  // battle royale, where every distinct lab takes a seat and we see who survives.
+  battle: { tableSize: 15, mafiaCount: 3, enableDetective: true, enableDoctor: true, discussionRounds: 2, difficulty: 'cunning' },
 };
 export type PresetName = keyof typeof PRESETS;
 
@@ -128,6 +133,7 @@ export const PRESET_META: { name: PresetName; label: string; blurb: string }[] =
   { name: 'chaos', label: 'Chaos', blurb: 'Big, fast, unpredictable' },
   { name: 'speedrun', label: 'Speedrun', blurb: 'Minimal latency' },
   { name: 'showcase', label: 'Showcase', blurb: 'Slow, voiced, dramatic' },
+  { name: 'battle', label: 'Battle', blurb: '15 seats, every model' },
 ];
 
 // Role composition derived from a resolved config — used by setup() to deal roles
@@ -154,7 +160,7 @@ export function resolveConfig(input: Partial<MafiaConfig> = {}): MafiaConfig {
   const seed = { ...STATIC_DEFAULTS, ...envDefaults() };
 
   // — Table size first; mafia/role defaults derive from it. —
-  const tableSize = clampInt(input.tableSize, 5, 10, 6);
+  const tableSize = clampInt(input.tableSize, 5, 15, 6);
 
   // mafiaCount: default by size, then clamp to a strict minority (§2.4.1):
   // mafiaCount ≤ floor((tableSize − 1) / 2), and ≥ 1.

@@ -42,3 +42,6 @@ yarn-error.log*
 next-env.d.ts
 
 weppy-project-sync/
+
+# separate reference repo dropped in-tree (has its own .git) — not part of this build
+mobile-codegen/
