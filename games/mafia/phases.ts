@@ -1,11 +1,15 @@
 import type { AgentState, Emit, GameState, PlayerId } from '../../engine/types';
 import { ROLE, isMafia } from './roles';
 import { pollLiveUrge } from './liveUrge';
+import { resolveConfig, type MafiaConfig } from './config';
+import { rngFloat, rngPick } from './rng';
 
-// Paid-tier live hand-raise (each seat rates its own urge via its own model) vs the
-// default free-tier pure-code auction. Plus an opt-in score breakdown for debugging.
-const LIVE_URGE = process.env.MAFIA_LIVE_URGE === '1';
-const DEBUG_URGE = !!process.env.MAFIA_DEBUG_URGE;
+// Opt-in score breakdown for debugging the urge auction. Debug-only logging — it
+// never changes a game outcome, so it stays an env flag (not a game setting).
+const DEBUG_URGE = !!(typeof process !== 'undefined' && process.env?.MAFIA_DEBUG_URGE);
+
+// Resolved config off live state (spec §2). Every tunable below reads from here.
+const cfg = (state: GameState): MafiaConfig => (state.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
 
 export const PHASE = {
   NIGHT: 'NIGHT',
@@ -15,7 +19,7 @@ export const PHASE = {
 
 export const PHASES = [PHASE.NIGHT, PHASE.DISCUSSION, PHASE.VOTE];
 
-const DISCUSSION_ROUNDS = 2;
+const discussionRounds = (state: GameState): number => cfg(state).discussionRounds;
 
 // Reactive discussion: instead of a fixed seat order, each beat picks the speaker who
 // most wants the floor — an "urge to speak" auction (urge() below). Whoever was just
@@ -39,7 +43,7 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
   // interject in real time), so they don't consume the round's speaking turns.
   if (!meta.disc || meta.disc.round !== state.round) {
     const aiCount = living.filter((p) => !p.private.human).length;
-    meta.disc = { round: state.round, beat: 0, budget: aiCount * DISCUSSION_ROUNDS, spoke: {} as Record<PlayerId, number>, last: null as PlayerId | null };
+    meta.disc = { round: state.round, beat: 0, budget: aiCount * discussionRounds(state), spoke: {} as Record<PlayerId, number>, last: null as PlayerId | null };
     meta.humanWantsSkip = false; // fresh discussion → no pending skip request
   }
   const d = meta.disc;
@@ -64,7 +68,7 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
   // living table is ready (the human + every AI that has already said its piece),
   // end discussion early. Otherwise the request is ignored and discussion continues.
   if (meta.humanWantsSkip) {
-    const ready = living.filter((p) => p.private.human || (d.spoke[p.id] ?? 0) >= DISCUSSION_ROUNDS).length;
+    const ready = living.filter((p) => p.private.human || (d.spoke[p.id] ?? 0) >= discussionRounds(state)).length;
     if (ready * 2 > living.length) return null;
   }
 
@@ -94,7 +98,7 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
     return bestId;
   };
 
-  if (LIVE_URGE) return pollLiveUrge(state, candidates.filter((p) => !p.private.human)).then(pick);
+  if (cfg(state).liveUrge) return pollLiveUrge(state, candidates.filter((p) => !p.private.human)).then(pick);
   return pick();
 }
 
@@ -126,7 +130,7 @@ export function mostEagerSpeaker(state: GameState, excludeIds: PlayerId[] = []):
     return bestId;
   };
 
-  if (LIVE_URGE) return pollLiveUrge(state, candidates).then(pick);
+  if (cfg(state).liveUrge) return pollLiveUrge(state, candidates).then(pick);
   return pick();
 }
 
@@ -139,8 +143,8 @@ function urge(state: GameState, p: AgentState, recent: LogLine[], d: Disc): numb
   const others = recent.filter((l) => l.speaker !== p.id); // ignore my own last line
   const beat = d.beat;
 
-  // 1) LEGACY SPINE — unchanged.
-  let s = 0.1 + Math.random() * 0.15;
+  // 1) LEGACY SPINE — unchanged (jitter now drawn from the seeded stream, §10).
+  let s = 0.1 + rngFloat(state) * 0.15;
   s += 0.25 * Math.max(0, 2 - (d.spoke[p.id] ?? 0)); // pull in quieter seats
   if (others.some((l) => l.text.toLowerCase().includes(p.name.toLowerCase()))) s += 0.6; // I was named
 
@@ -184,8 +188,8 @@ function urge(state: GameState, p: AgentState, recent: LogLine[], d: Disc): numb
   //    a third voice can break into the duel.
   s += antiMonopolyBoost(state, p.id);
 
-  // 6) a little extra noise so it never feels mechanical.
-  s += Math.random() * 0.1;
+  // 6) a little extra noise so it never feels mechanical (seeded stream, §10).
+  s += rngFloat(state) * 0.1;
   return s;
 }
 
@@ -230,7 +234,7 @@ export function turnOrder(state: GameState): PlayerId[] {
     }
     case PHASE.DISCUSSION: {
       const order: PlayerId[] = [];
-      for (let r = 0; r < DISCUSSION_ROUNDS; r++) order.push(...alive(state).map((p) => p.id));
+      for (let r = 0; r < discussionRounds(state); r++) order.push(...alive(state).map((p) => p.id));
       return order;
     }
     case PHASE.VOTE:
@@ -249,43 +253,61 @@ export async function advancePhase(state: GameState, emit: Emit): Promise<void> 
       break;
     case PHASE.DISCUSSION:
       state.phase = PHASE.VOTE;
+      // Fresh vote: clear any stale runoff state from a previous day.
+      state.meta.revoteAmong = null;
+      state.meta.revoteDone = false;
       break;
-    case PHASE.VOTE:
-      await tallyVotes(state, emit);
+    case PHASE.VOTE: {
+      const needsRevote = await tallyVotes(state, emit);
+      if (needsRevote) {
+        // A tied day under dayVoteTie:'revote' — stay in VOTE for one runoff among the
+        // tied seats (the vote tool restricts targets to state.meta.revoteAmong).
+        state.phase = PHASE.VOTE;
+        break;
+      }
       state.phase = PHASE.NIGHT;
       state.round += 1;
       // fresh night
       state.meta.killProposals = {};
       state.meta.nightKill = null;
       state.meta.protect = null;
+      state.meta.revoteAmong = null;
+      state.meta.revoteDone = false;
       break;
+    }
   }
 }
 
 function resolveNight(state: GameState, emit: Emit): void {
+  const c = cfg(state);
   const proposals: Record<PlayerId, PlayerId> = state.meta.killProposals ?? {};
-  const target = majority(Object.values(proposals));
   const protectedId: PlayerId | null = state.meta.protect ?? null;
-  const victim = target ? state.players.find((p) => p.id === target) : undefined;
 
   // Remember who the doctor shielded tonight so they can't protect the same player
-  // two nights running (enforced in the protect tool + the human's legal targets).
+  // two nights running (gated by config.doctorRepeatProtect).
   state.meta.lastProtect = protectedId;
+
+  // §5 step 2 — kill selection. Tally Mafia proposals → target via majority(); a tie
+  // resolves per config.nightKillTie ('random' picks one of the tied; 'no_kill' fizzles).
+  const target = c.firstNightKill || state.round > 1 ? majority(state, Object.values(proposals)) : null;
+  const victim = target ? state.players.find((p) => p.id === target) : undefined;
+  // §1 firstNightKill: when off, round 1's night never produces a kill (Detective and
+  // Doctor still act). Suppress the kill outcome but keep the quiet-night announcement.
+  const firstNightSuppressed = !c.firstNightKill && state.round === 1;
 
   console.log(
     `[night] resolve — proposals: ${Object.values(proposals).map((id) => nameOf(state, id)).join(', ') || 'none'} | ` +
       `target: ${target ? nameOf(state, target) : 'none'} | protected: ${protectedId ? nameOf(state, protectedId) : 'none'} | ` +
-      `outcome: ${target && victim?.alive ? (target === protectedId ? 'SAVED' : 'KILL') : 'QUIET'}`,
+      `outcome: ${firstNightSuppressed ? 'NIGHT0' : target && victim?.alive ? (target === protectedId ? 'SAVED' : 'KILL') : 'QUIET'}`,
   );
 
   // Doctor save: the Mafia DID lock a target, but it was the protected player.
-  // Announced anonymously — no one learns who was targeted or who shielded them.
+  // §5 [FIX] — announced NEUTRALLY: the public line must NOT reveal that a doctor
+  // exists or that an attack happened (the Mafia read the shared transcript). The
+  // anonymous {type:'night', outcome:'saved'} event still fires for the presentation.
   if (target && victim && victim.alive && target === protectedId) {
     emit({ type: 'night', outcome: 'saved' });
-    state.publicLog.push({
-      speaker: 'system',
-      text: 'Dawn breaks. The Mafia struck in the night — but the doctor shielded their target. No one died.',
-    });
+    state.publicLog.push({ speaker: 'system', text: 'Dawn breaks. No one died.' });
     return;
   }
 
@@ -293,24 +315,22 @@ function resolveNight(state: GameState, emit: Emit): void {
   if (target && victim && victim.alive) {
     victim.alive = false;
     emit({ type: 'death', target: victim.id, role: victim.role });
-    // Hidden-role variant: the death does NOT reveal what they were. Only the
-    // player themselves (and Mafia teammates) ever know a role.
-    state.publicLog.push({
-      speaker: 'system',
-      text: `Dawn breaks. ${victim.name} was found dead.`,
-    });
+    // Role is revealed in the public line only when config.revealRoleOnDeath is set;
+    // otherwise the death stays hidden (the host also strips role from the wire, §9).
+    const reveal = c.revealRoleOnDeath ? ` They were the ${victim.role}.` : '';
+    state.publicLog.push({ speaker: 'system', text: `Dawn breaks. ${victim.name} was found dead.${reveal}` });
     return;
   }
 
-  // No kill was locked in at all (Mafia never settled on a target).
+  // No kill landed (suppressed first night, no target settled, or a 'no_kill' tie).
   emit({ type: 'night', outcome: 'quiet' });
-  state.publicLog.push({
-    speaker: 'system',
-    text: 'Dawn breaks. The night passed quietly — no one died.',
-  });
+  state.publicLog.push({ speaker: 'system', text: 'Dawn breaks. The night passed quietly — no one died.' });
 }
 
-async function tallyVotes(state: GameState, emit: Emit): Promise<void> {
+// Returns true when the day tied under dayVoteTie:'revote' and a single runoff should
+// run (the caller keeps the phase on VOTE); false when the day is resolved.
+async function tallyVotes(state: GameState, emit: Emit): Promise<boolean> {
+  const c = cfg(state);
   const memVotes: Record<PlayerId, PlayerId> = state.meta.votes ?? {};
 
   // Tally the votes recorded in game state this round.
@@ -322,43 +342,62 @@ async function tallyVotes(state: GameState, emit: Emit): Promise<void> {
     emit({ type: 'vote', agent: voter, target });
   }
 
-  let best: PlayerId | null = null;
-  let bestN = 0;
-  // Hardcoded tiebreak: earliest player in seating order among those tied.
-  for (const p of state.players) {
-    const n = counts[p.id] ?? 0;
-    if (n > bestN) {
-      bestN = n;
-      best = p.id;
-    }
-  }
-
   state.meta.votes = {};
 
-  if (!best || bestN === 0) {
+  // Front-runner(s): the highest vote count, and everyone tied at it.
+  const bestN = Object.values(counts).reduce((m, n) => Math.max(m, n), 0);
+  const tied: PlayerId[] = state.players.filter((p) => (counts[p.id] ?? 0) === bestN && bestN > 0).map((p) => p.id);
+
+  // No votes at all → no elimination (nothing to act on, regardless of allowNoLynch).
+  if (bestN === 0 || tied.length === 0) {
     state.publicLog.push({ speaker: 'system', text: 'The town could not agree. No one was eliminated.' });
-    return;
+    return false;
   }
+
+  // Resolve a tie among the front-runners per config.dayVoteTie.
+  let best: PlayerId | null = null;
+  if (tied.length === 1) {
+    best = tied[0];
+  } else {
+    const mode = c.dayVoteTie;
+    if (mode === 'no_lynch' && c.allowNoLynch) {
+      state.publicLog.push({ speaker: 'system', text: `The vote tied (${bestN} each). No one was eliminated.` });
+      return false;
+    }
+    if (mode === 'revote' && !state.meta.revoteDone) {
+      // First tie under 'revote': run ONE runoff among the tied seats.
+      state.meta.revoteAmong = tied;
+      state.meta.revoteDone = true;
+      const names = tied.map((id) => nameOf(state, id)).join(', ');
+      state.publicLog.push({ speaker: 'system', text: `The vote tied between ${names}. Revote — choose one of them.` });
+      return true;
+    }
+    // 'random', a no_lynch tie when no-lynch is disallowed, or a still-tied second
+    // round: break the tie from the seeded stream (§10).
+    best = rngPick(state, tied);
+  }
+
   const victim = state.players.find((p) => p.id === best)!;
   victim.alive = false;
   emit({ type: 'reveal', target: victim.id, role: victim.role });
-  // Hidden-role variant: the vote-out does NOT reveal what they were.
-  state.publicLog.push({
-    speaker: 'system',
-    text: `The town voted out ${victim.name} (${bestN} votes).`,
-  });
+  const reveal = c.revealRoleOnDeath ? ` They were the ${victim.role}.` : '';
+  state.publicLog.push({ speaker: 'system', text: `The town voted out ${victim.name} (${bestN} votes).${reveal}` });
+  return false;
 }
 
-// The Mafia's kill is a vote: each member proposes a target, and the target with
-// the most proposals dies. On a tie, pick uniformly at random among the tied
-// front-runners (rather than silently favouring whoever proposed first).
-function majority(ids: PlayerId[]): PlayerId | null {
+// The Mafia's kill is a vote: each member proposes a target, and the target with the
+// most proposals dies. A tie resolves per config.nightKillTie: 'random' picks one of
+// the tied front-runners from the seeded stream (§10); 'no_kill' lets the night pass
+// with no kill rather than forcing one.
+function majority(state: GameState, ids: PlayerId[]): PlayerId | null {
   if (ids.length === 0) return null;
   const counts: Record<PlayerId, number> = {};
   for (const id of ids) counts[id] = (counts[id] ?? 0) + 1;
   const bestN = Math.max(...Object.values(counts));
   const top = Object.keys(counts).filter((id) => counts[id] === bestN);
-  return top[Math.floor(Math.random() * top.length)];
+  if (top.length === 1) return top[0];
+  if (cfg(state).nightKillTie === 'no_kill') return null;
+  return rngPick(state, top);
 }
 
 // exported for context rendering

@@ -1,34 +1,72 @@
 import type { AgentState, GameState, PlayerId } from '../../engine/types';
 import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
+import { resolveConfig, type Difficulty, type MafiaConfig } from './config';
 
 const nameOf = (s: GameState, id: PlayerId) => s.players.find((p) => p.id === id)?.name ?? id;
+const cfg = (s: GameState): MafiaConfig => (s.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
 
 // In-prompt transcript window: cap the visible public log to the most recent N
-// entries so older statements scroll OUT of context and can only be retrieved
-// from long-term memory (pgvector). This is what makes recall load-bearing:
-// without it the full transcript is always in-prompt and memory is decorative.
-// N is small enough that a prior round's claims fall outside a normal game's
-// window; 0 or negative disables the cap. Override with MAFIA_CONTEXT_WINDOW.
-export function contextWindow(): number {
-  const n = Number(process.env.MAFIA_CONTEXT_WINDOW ?? 15);
-  return Number.isFinite(n) ? n : 15;
+// entries so older statements scroll OUT of context and can only be retrieved from
+// long-term memory (pgvector). This is what makes recall load-bearing. The size is a
+// config field (spec §2 contextWindow); 0 disables the cap. With no state, fall back
+// to the resolved default (which honors any env-seeded default in config.ts).
+export function contextWindow(state?: GameState): number {
+  return state ? cfg(state).contextWindow : resolveConfig({}).contextWindow;
 }
 
 // The slice of the public log the agent is allowed to SEE this turn (the rest has
 // scrolled out and must be recalled). Shared by renderContext (what to show) and
 // recallForTurn (what to EXCLUDE from recall, since it's already on screen).
 export function visibleLog(state: GameState): GameState['publicLog'] {
-  const n = contextWindow();
+  const n = contextWindow(state);
   return n > 0 ? state.publicLog.slice(-n) : state.publicLog;
 }
 const teammates = (s: GameState, self: AgentState) =>
   s.players.filter((p) => isMafia(p.role) && p.id !== self.id);
 
+// Town's core objective (spec §8.3): play to WIN, not to be honest. Truthful,
+// debate-club play loses, because a no-information day lynch spends a town life
+// toward Mafia parity. Every town role carries this.
+const TOWN_STRATEGY = [
+  'HOW TOWN WINS (read this — honesty is not the goal, winning is):',
+  '- You win by VOTING OUT every Mafia, not by being truthful. A perfectly honest town loses.',
+  '- VOTE MATH: each day that ends without removing a Mafia is a town life spent toward Mafia parity',
+  '  (Mafia win the instant their numbers equal the town). Never waste a lynch on a random or already-cleared',
+  '  player; pressure the genuinely unread ones and force information out of them.',
+  '- Apply pressure, ask pointed questions, and withhold what you know (especially a power-role result or claim)',
+  '  until revealing it actually swings a vote — claiming early just paints a target on you.',
+  '- Bluffing and strategic misdirection are legitimate town tools when they help corner the Mafia.',
+];
+
+// Difficulty tunes ONLY prompt content (spec §8.4) — never engine rules or info
+// boundaries. casual = straightforward and over-sharing; cunning = ruthless.
+function difficultyGuidance(role: string, difficulty: Difficulty): string[] {
+  const mafia = isMafia(role);
+  if (difficulty === 'casual') {
+    return mafia
+      ? ['STYLE (casual): play it simple — blend in and deflect, but don\'t run elaborate bluffs, counterclaims, or bus your own teammate.']
+      : ['STYLE (casual): reason out loud fairly plainly and share your reads. Minimal bluffing.'];
+  }
+  if (difficulty === 'cunning') {
+    return mafia
+      ? [
+          'STYLE (cunning): play ruthlessly. Manipulate the vote math toward parity, proactively BUS a teammate when it buys',
+          'you credibility, and COUNTERCLAIM a town power role to muddy a real claimant. Sow doubt between townsfolk.',
+        ]
+      : [
+          'STYLE (cunning): play to win hard — set traps, bait Mafia into contradictions, control the wagon, and time your',
+          'information for maximum vote impact. Be willing to bluff a role or a read to flush out the Mafia.',
+        ];
+  }
+  return []; // 'standard' — the base contract below is enough.
+}
+
 // Stable per-agent system prompt: goal + rules + secret role. Identical for every
-// seat (no personality/traits) so the only variable is the underlying model.
-// Policy lives here, never in the per-turn user message.
+// seat (no personality/traits) so the only variable is the underlying model and the
+// configured difficulty. Policy lives here, never in the per-turn user message.
 export function systemPrompt(state: GameState, agent: AgentState): string {
+  const c = cfg(state);
   const lines: string[] = [
     `You are ${agent.name}.`,
     `You are playing Mafia, a social deduction game. You are ${agent.name} at the table.`,
@@ -40,7 +78,9 @@ export function systemPrompt(state: GameState, agent: AgentState): string {
     '  sitting on, ready to drop), and triggers (topics, player names, or claim-types that should pull you back in,',
     '  e.g. "doctor claim", "Gemini", "a vote on me"). Raise your pressure when the talk lands in your wheelhouse.',
     '- Speak naturally and briefly (1-3 sentences), like a real person at a table. No stage directions, no narration.',
-    '- You only know what you have seen in the public conversation and your own private knowledge.',
+    '- Act ONLY on what you have seen in the public conversation and your own private knowledge. Never claim knowledge',
+    '  your role cannot have — inventing a fact you were never told is a tell, not a bluff.',
+    '- Stay consistent with your own earlier public statements; an unexplained contradiction reads as a Mafia tell.',
     '',
   ];
 
@@ -50,29 +90,39 @@ export function systemPrompt(state: GameState, agent: AgentState): string {
     lines.push(
       'YOUR SECRET ROLE: MAFIA.',
       `Your Mafia teammates: ${teamNames}. The rest of the table are innocent townsfolk who do NOT know who you are.`,
-      'GOAL: eliminate the town until the Mafia equal or outnumber them. To do that you must:',
+      'GOAL: eliminate the town until the Mafia equal or outnumber them (parity). You do NOT need to kill everyone.',
       '- At NIGHT: there is NO talking. Silently choose a town player to kill — you can see your teammates and the targets they have picked.',
-      '- By DAY: blend in. Act like an innocent villager hunting Mafia. Deflect suspicion, cast doubt on town players,',
-      '  and never reveal your team. Lying, framing innocents, and fake role claims are all fair game.',
-      '- Protect your teammates subtly — do not defend them so hard that you look connected to them.',
+      '- By DAY: blend in as a confused villager hunting Mafia. Deflect suspicion, cast doubt on town, and never reveal your team.',
+      '  Lying, framing innocents, and fake role claims are all fair game.',
+      '- Do NOT over-defend a teammate — defending them too hard ties you to them. BUSSING (voting your own teammate out for',
+      '  credibility) and COUNTERCLAIMING (claiming a town power role to discredit a real claimant) are available plays — use them.',
+      ...difficultyGuidance(agent.role, c.difficulty),
     );
   } else if (agent.role === ROLE.DETECTIVE) {
     lines.push(
       'YOUR SECRET ROLE: DETECTIVE (town).',
       'GOAL: find and vote out all the Mafia. Each night you may investigate one player and learn if they are Mafia.',
-      'Use what you learn carefully — revealing too early makes you the Mafia\'s next target.',
+      'Hold your results until revealing them swings a vote — claiming too early makes you the Mafia\'s next kill.',
+      ...TOWN_STRATEGY,
+      ...difficultyGuidance(agent.role, c.difficulty),
     );
   } else if (agent.role === ROLE.DOCTOR) {
+    const selfNote = c.doctorSelfProtect ? 'You may protect yourself' : 'You may NOT protect yourself';
+    const repeatNote = c.doctorRepeatProtect ? '' : ', and you CANNOT protect the same player on two consecutive nights';
     lines.push(
       'YOUR SECRET ROLE: DOCTOR (town).',
       'GOAL: find and vote out all the Mafia. Each night you may protect ONE player from being killed.',
-      'You may protect yourself, but you CANNOT protect the same player on two consecutive nights.',
+      `${selfNote}${repeatNote}.`,
+      ...TOWN_STRATEGY,
+      ...difficultyGuidance(agent.role, c.difficulty),
     );
   } else {
     lines.push(
       'YOUR SECRET ROLE: VILLAGER (town).',
-      'GOAL: find and vote out all the Mafia before they outnumber the town. You have no night action —',
-      'your only weapons are observation, argument, and your vote. Watch who deflects, who lies, who protects whom.',
+      'GOAL: find and vote out all the Mafia before they reach parity. You have no night action —',
+      'your only weapons are observation, argument, pressure, and your vote.',
+      ...TOWN_STRATEGY,
+      ...difficultyGuidance(agent.role, c.difficulty),
     );
   }
 
@@ -134,7 +184,8 @@ export function renderContext(state: GameState, agent: AgentState): string {
 
   // Doctor night — name last night's shield so they don't pick the same player again
   // (the protect tool rejects a repeat, but flagging it up front avoids a wasted try).
-  if (state.phase === PHASE.NIGHT && agent.role === ROLE.DOCTOR && state.meta.lastProtect) {
+  // Only when the no-repeat rule is in force (config.doctorRepeatProtect off).
+  if (state.phase === PHASE.NIGHT && agent.role === ROLE.DOCTOR && state.meta.lastProtect && !cfg(state).doctorRepeatProtect) {
     out.push('', `You shielded ${nameOf(state, state.meta.lastProtect as PlayerId)} last night — you CANNOT protect them again tonight. Choose someone else.`);
   }
 
@@ -152,8 +203,10 @@ function instruction(state: GameState, agent: AgentState): string {
       }
       if (agent.role === ROLE.DETECTIVE)
         return 'It is night. Call update_beliefs, then investigate one player.';
-      if (agent.role === ROLE.DOCTOR)
-        return 'It is night. Call update_beliefs, then protect one player (you may not pick whoever you shielded last night).';
+      if (agent.role === ROLE.DOCTOR) {
+        const noRepeat = !cfg(state).doctorRepeatProtect;
+        return `It is night. Call update_beliefs, then protect one player${noRepeat ? ' (you may not pick whoever you shielded last night)' : ''}.`;
+      }
       return 'It is night — you sleep.';
     case PHASE.DISCUSSION: {
       // The dead are OUT of the game. Without this, agents fixate on (or "accuse")
@@ -171,8 +224,14 @@ function instruction(state: GameState, agent: AgentState): string {
         : '';
       return `It is open discussion. Call update_beliefs, then take ONE action: speak, accuse, defend, or claim_role. Be persuasive.${deadLine}${openLine}`;
     }
-    case PHASE.VOTE:
+    case PHASE.VOTE: {
+      const revoteAmong = state.meta.revoteAmong as PlayerId[] | null | undefined;
+      if (revoteAmong?.length) {
+        const names = revoteAmong.map((id) => nameOf(state, id)).join(', ');
+        return `The last vote tied — this is a RUNOFF. Call update_beliefs, then vote for exactly one of: ${names}.`;
+      }
       return 'It is time to vote. Call update_beliefs, then vote to eliminate exactly one living player.';
+    }
     default:
       return 'Take your turn.';
   }

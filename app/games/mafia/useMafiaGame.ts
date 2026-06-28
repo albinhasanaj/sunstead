@@ -12,6 +12,7 @@ import { useVoiceQueue } from './useVoiceQueue';
 import { useAuth } from '../../_components/AuthProvider';
 import { PHASE_SECS, MAFIA_CHANCE_START, MAFIA_CHANCE_STEP, MAFIA_CHANCE_KEY } from './constants';
 import type { Announce, Feed, Player, Turn } from './types';
+import type { MafiaConfig } from '@/games/mafia/config';
 
 export function useMafiaGame() {
   const { profile, userId } = useAuth();
@@ -174,6 +175,8 @@ export function useMafiaGame() {
           setGameId(e.gameId);
           setMode(e.mode);
           setHumanId(e.humanId);
+          // Honor the server-resolved config (e.g. voiceEnabled may have been clamped).
+          if (e.config && typeof e.config.voiceEnabled === 'boolean') setVoiceOn(e.config.voiceEnabled);
           break;
         case 'setup': {
           setPlayers(e.players.map((p: Player) => ({ ...p, alive: true })));
@@ -245,16 +248,17 @@ export function useMafiaGame() {
           setFeed((f) => [...f, { k: 'whisper', who: e.agent, text: e.text }]);
           break;
         case 'death':
-          // Hidden-role variant: mark them dead but keep their role secret.
-          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
-          setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.` }]);
+          // Mark them dead. The role is present on the wire only when the game reveals
+          // it (config.revealRoleOnDeath) or it's your own death — otherwise it stays secret.
+          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) } : p)));
+          setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ''}` }]);
           showAnnounce({ eyebrow: 'Killed in the night', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('death');
           if (e.target === humanIdRef.current) armDeathScreen('killed', e);
           break;
         case 'reveal':
-          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false } : p)));
-          setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.` }]);
+          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) } : p)));
+          setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ''}` }]);
           showAnnounce({ eyebrow: 'Voted out by the table', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
           playSfx('reveal');
           if (e.target === humanIdRef.current) armDeathScreen('voted', e);
@@ -321,7 +325,7 @@ export function useMafiaGame() {
   );
 
   const start = useCallback(
-    async (m: 'watch' | 'play', devRoleArg?: string, mafiaCount?: number) => {
+    async (m: 'watch' | 'play', devRoleArg?: string, config?: Partial<MafiaConfig>) => {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
@@ -351,6 +355,9 @@ export function useMafiaGame() {
       announcedTeamRef.current = false;
       setMode(m);
       setRunning(true);
+      // Voice is a config toggle — default the mute state to it (server echoes the
+      // resolved value on the 'game' event, which we honor too).
+      setVoiceOn(config?.voiceEnabled !== false);
       voice.reset();
 
       // Start the looping tension bed (first load generates it server-side, ~5s).
@@ -371,7 +378,7 @@ export function useMafiaGame() {
             ...(userId ? { userId } : {}),
             ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),
             ...(devRoleArg ? { devRole: devRoleArg } : {}),
-            ...(mafiaCount ? { mafiaCount } : {}),
+            ...(config ? { config } : {}),
             ...(m === 'play' ? { mafiaChance: mafiaChanceRef.current } : {}),
           }),
           signal: ac.signal,

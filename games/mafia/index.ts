@@ -5,35 +5,37 @@ import { PHASE, PHASES, turnOrder, advancePhase, nextSpeaker } from './phases';
 import { toolsFor } from './tools';
 import { winner } from './winCondition';
 import { systemPrompt, renderContext, visibleLog } from './prompts';
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
+import { resolveConfig, roleComposition, type MafiaConfig } from './config';
+import { makeRng, shuffleWith } from './rng';
 
 function setup(playerNames: string[], options?: SetupOptions): GameState {
-  // Names → seats. Each known character carries its own model; an unknown custom
-  // name falls back to the default model. With no names, use the default roster
-  // (the seats reachable on the free tier today). All seats get IDENTICAL
-  // instructions — the only variable is the underlying model.
-  const names = playerNames.length ? playerNames : DEFAULT_ROSTER;
-  // MAFIA_MODEL forces every seat onto one model — handy on the free tier where
-  // only some providers are reachable. Otherwise each seat keeps its own model.
-  const forced = process.env.MAFIA_MODEL;
+  // One resolved, validated config drives the whole game (spec §2). The host
+  // (API route) usually resolves it already; re-resolving here is idempotent and
+  // keeps headless callers (scripts/tests) working with sane defaults.
+  const config = resolveConfig((options?.config as Partial<MafiaConfig>) ?? {});
+
+  // Seed the single game RNG from the config seed BEFORE dealing roles, so the
+  // shuffle is part of the deterministic stream (spec §10).
+  const rng = makeRng(config.seed ?? 'mafia');
+
+  // Names → seats. With no names, use the default roster, sized to the table.
+  const pool = playerNames.length ? playerNames : DEFAULT_ROSTER;
+  const names = pool.slice(0, config.tableSize);
+
+  // config.modelOverride forces every seat onto one model (handy on the free tier);
+  // otherwise each known character keeps its own model.
   const seats = names.map((name) => {
     const known = personalityByName(name);
     return {
       name,
-      model: forced || known?.model || FALLBACK_MODEL,
-      timeoutMs: known?.timeoutMs,
+      model: config.modelOverride || known?.model || FALLBACK_MODEL,
+      // A per-personality timeout (a model that reliably stalls) tightens the
+      // config-wide turn budget; otherwise use config.turnTimeoutMs.
+      timeoutMs: known?.timeoutMs ?? config.turnTimeoutMs,
     };
   });
 
-  const roles = shuffle(roleDistribution(seats.length, options?.mafiaCount));
+  const roles = shuffleWith(rng, roleDistribution(roleComposition(config)));
 
   const players: AgentState[] = seats.map((p, i) => ({
     id: `p${i + 1}`,
@@ -49,7 +51,16 @@ function setup(playerNames: string[], options?: SetupOptions): GameState {
     round: 1,
     publicLog: [],
     winner: null,
-    meta: { gameId: crypto.randomUUID(), votes: {}, killProposals: {}, nightKill: null, protect: null, lastProtect: null },
+    meta: {
+      gameId: crypto.randomUUID(),
+      config, // §2: ALL game logic reads tunables from here
+      _rng: rng, // the deterministic stream seeded above (used by rngFor)
+      votes: {},
+      killProposals: {},
+      nightKill: null,
+      protect: null,
+      lastProtect: null,
+    },
   };
 }
 
@@ -57,6 +68,8 @@ function setup(playerNames: string[], options?: SetupOptions): GameState {
 // similar to the live discussion, and surface possible contradictions to the agent
 // before it reasons. Retrieved rows are DATA only.
 async function recallForTurn(state: GameState, agent: AgentState): Promise<string | null> {
+  // Long-term memory recall is a config toggle (spec §2 enableMemoryRecall).
+  if (!(state.meta.config as MafiaConfig | undefined)?.enableMemoryRecall) return null;
   const gameId = state.meta.gameId as string | undefined;
   if (!gameId) return null;
   const recent = state.publicLog
@@ -111,18 +124,29 @@ export const mafiaGame: GameDefinition = {
   systemPrompt,
   renderContext,
   recallForTurn,
-  // Reactive discussion (Phase 1 concurrency); set MAFIA_DISCUSSION=classic to
-  // fall back to fixed seat order.
-  ...(process.env.MAFIA_DISCUSSION !== 'classic' ? { beatPhases: [PHASE.DISCUSSION], nextSpeaker } : {}),
-  // Concurrency: NIGHT actions and secret VOTEs are all independent, so every
-  // actor decides at once — the phase resolves the moment everyone (incl. you)
-  // has acted, instead of waiting through sequential turns. Set MAFIA_PARALLEL=0
-  // to fall back to sequential.
-  ...(process.env.MAFIA_PARALLEL !== '0' ? { parallelPhases: [PHASE.NIGHT, PHASE.VOTE] } : {}),
-  // Per-seat models come from each personality; this is only the fallback for a
-  // seat with no model of its own. A game-wide override is still possible via env.
-  model: process.env.MAFIA_MODEL || FALLBACK_MODEL,
+  // Reactive discussion is config-driven (spec §2 reactiveDiscussion): a reactive
+  // DISCUSSION uses the urge-auction scheduler; otherwise the engine falls back to
+  // the precomputed turnOrder (fixed seat order).
+  nextSpeaker,
+  beatPhases: (state: GameState) => (cfg(state).reactiveDiscussion ? [PHASE.DISCUSSION] : []),
+  // Concurrency is config-driven (parallelNight / parallelVote): NIGHT actions and
+  // secret VOTEs are independent, so every actor can decide at once.
+  parallelPhases: (state: GameState) => {
+    const c = cfg(state);
+    const out: string[] = [];
+    if (c.parallelNight) out.push(PHASE.NIGHT);
+    if (c.parallelVote) out.push(PHASE.VOTE);
+    return out;
+  },
+  // Per-seat models come from each personality (or config.modelOverride, applied in
+  // setup). This is only the fallback for a seat with no model of its own.
+  model: FALLBACK_MODEL,
   fallbackModel: FALLBACK_MODEL,
 };
+
+// Resolved config off live state, with safe defaults if setup hasn't stamped it yet.
+function cfg(state: GameState): MafiaConfig {
+  return (state.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
+}
 
 export default mafiaGame;

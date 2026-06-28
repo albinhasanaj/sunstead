@@ -70,11 +70,11 @@ export function terminalRenderer(state: GameState): (e: GameEvent) => void {
         console.log(c.yellow(`  🗳  ${nameOf(state, e.agent)} votes → ${nameOf(state, e.target)}`));
         break;
       case 'death':
-        console.log(c.red(`  ☠  ${nameOf(state, e.target)} was killed in the night. (${e.role})`));
+        console.log(c.red(`  ☠  ${nameOf(state, e.target)} was killed in the night.${e.role ? ` (${e.role})` : ''}`));
         break;
       case 'reveal':
         console.log(
-          c.red(`  ☠  ${nameOf(state, e.target)} was eliminated by vote — they were ${c.bold(e.role)}.`),
+          c.red(`  ☠  ${nameOf(state, e.target)} was eliminated by vote${e.role ? ` — they were ${c.bold(e.role)}` : ''}.`),
         );
         break;
       case 'win':

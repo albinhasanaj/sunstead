@@ -42,10 +42,11 @@ export interface ToolContext {
 
 export type Emit = (e: GameEvent) => void;
 
-// Optional knobs the host passes into setup to tune a single game (e.g. the chosen
-// Mafia count from the lobby). Games may ignore fields they don't use.
+// Knobs the host passes into setup to tune a single game. `config` is an opaque,
+// game-defined configuration object (resolved by the host, e.g. the lobby's chosen
+// settings); the engine never inspects it — the game's own setup() reads it.
 export interface SetupOptions {
-  mafiaCount?: number;
+  config?: unknown;
 }
 
 // The plug-in object. Mafia returns one of these. Werewolf would return another.
@@ -60,14 +61,15 @@ export interface GameDefinition {
   // Optional: phases whose speaking order is decided dynamically per beat (e.g. a
   // reactive discussion where whoever is most motivated speaks next) instead of a
   // precomputed turnOrder. For such phases the engine repeatedly calls nextSpeaker
-  // until it returns null.
-  beatPhases?: string[];
+  // until it returns null. May be a function of state so the game can decide per-game
+  // (e.g. from its resolved config) whether a phase is reactive.
+  beatPhases?: string[] | ((state: GameState) => string[]);
   // May be async: an optional paid "live urge" path polls each seat's own model
   // before picking. The free-tier path stays synchronous; the engine awaits either.
   nextSpeaker?: (state: GameState) => PlayerId | null | Promise<PlayerId | null>;
   // Phases whose turns are independent (e.g. secret simultaneous voting) and may
-  // run concurrently instead of one at a time.
-  parallelPhases?: string[];
+  // run concurrently instead of one at a time. May be a function of state (config-driven).
+  parallelPhases?: string[] | ((state: GameState) => string[]);
   // Optional: called by the orchestrator right before each agent's turn runs, so a
   // game can announce who/what is about to act (e.g. Mafia's night wake-up calls).
   onTurnStart?: (state: GameState, agent: AgentState, emit: Emit) => void;
@@ -106,9 +108,11 @@ export type GameEvent =
   | { type: 'whisper'; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)
   | { type: 'action'; agent: PlayerId; kind: string; target?: PlayerId }
   | { type: 'knowledge'; agent: PlayerId; target: PlayerId; result: string; text: string } // private finding (e.g. Detective)
-  | { type: 'death'; target: PlayerId; role: string }
+  // `role` is omitted on the wire in play mode for a hidden-role game (the host's
+  // emit filter strips it unless config.revealRoleOnDeath or it's the human's own death).
+  | { type: 'death'; target: PlayerId; role?: string }
   | { type: 'vote'; agent: PlayerId; target: PlayerId }
-  | { type: 'reveal'; target: PlayerId; role: string }
+  | { type: 'reveal'; target: PlayerId; role?: string }
   // Anonymous night outcome when no one dies: 'saved' = the Mafia's target was
   // protected by the doctor; 'quiet' = no kill landed. Carries no ids — no one
   // learns who was targeted or who saved them.

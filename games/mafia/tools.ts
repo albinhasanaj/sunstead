@@ -3,6 +3,10 @@ import type { AgentState, GameState, GameTool, PlayerId, ToolContext } from '../
 import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
 import { remember } from '../../lib/memory';
+import { resolveConfig, type MafiaConfig } from './config';
+
+// Resolved config off live state (spec §2). Role-rule gates below read from here.
+const cfg = (state: GameState): MafiaConfig => (state.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
 
 // Resolve a player the model referred to by name (preferred) or id.
 function resolve(state: GameState, ref: string, opts: { aliveOnly?: boolean } = {}): AgentState | undefined {
@@ -188,6 +192,12 @@ const vote: GameTool = {
     if (!t) return `No living player named "${args.target}".`;
     // Don't let a fumbled argument make a seat vote to eliminate ITSELF.
     if (t.id === ctx.agent.id) return `You can't vote for yourself — choose a different living player.`;
+    // Runoff (dayVoteTie:'revote'): only the tied front-runners are eligible.
+    const revoteAmong = ctx.state.meta.revoteAmong as PlayerId[] | null | undefined;
+    if (revoteAmong && revoteAmong.length && !revoteAmong.includes(t.id)) {
+      const names = revoteAmong.map((id) => ctx.state.players.find((p) => p.id === id)?.name ?? id).join(', ');
+      return `This is a runoff — you may only vote for one of: ${names}.`;
+    }
     ctx.state.meta.votes = ctx.state.meta.votes ?? {};
     ctx.state.meta.votes[ctx.agent.id] = t.id;
     ctx.emit({ type: 'action', agent: ctx.agent.id, kind: 'vote', target: t.id });
@@ -228,6 +238,11 @@ const investigate: GameTool = {
   execute: async (args, ctx) => {
     const t = resolve(ctx.state, args.target, { aliveOnly: true });
     if (!t) return `No living player named "${args.target}".`;
+    // §5/§6 [FIX] — no self-investigation unless config.detectiveSelfInvestigate, so an
+    // AI Detective can't waste a night learning it's town (mirrors the vote self-check).
+    if (t.id === ctx.agent.id && !cfg(ctx.state).detectiveSelfInvestigate) {
+      return `You can't investigate yourself — choose another living player.`;
+    }
     const result = isMafia(t.role) ? 'MAFIA' : 'not Mafia';
     ctx.agent.private.knowledge = ctx.agent.private.knowledge ?? [];
     ctx.agent.private.knowledge.push(`Round ${ctx.state.round}: ${t.name} is ${result}.`);
@@ -251,11 +266,16 @@ const protect: GameTool = {
   inputSchema: z.object({ target: z.string().describe('Who to protect, by name.') }),
   legalIn: (state, agent) => state.phase === PHASE.NIGHT && agent.role === ROLE.DOCTOR,
   execute: async (args, ctx) => {
+    const c = cfg(ctx.state);
     const t = resolve(ctx.state, args.target, { aliveOnly: true });
     if (!t) return `No living player named "${args.target}".`;
-    // No two-nights-in-a-row save: you can shield the same person again, just not
-    // on consecutive nights (lastProtect is this player from the night just past).
-    if (t.id === ctx.state.meta.lastProtect) {
+    // §6 — self-protection is config-gated (config.doctorSelfProtect).
+    if (t.id === ctx.agent.id && !c.doctorSelfProtect) {
+      return `You can't protect yourself in this game — choose another living player.`;
+    }
+    // No two-nights-in-a-row save unless config.doctorRepeatProtect allows it
+    // (lastProtect is whoever you shielded the night just past).
+    if (!c.doctorRepeatProtect && t.id === ctx.state.meta.lastProtect) {
       return `You shielded ${t.name} last night — you can't protect the same player two nights in a row. Choose someone else.`;
     }
     ctx.state.meta.protect = t.id;

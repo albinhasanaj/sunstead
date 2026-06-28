@@ -56,24 +56,22 @@ export const DEFAULT_ROSTER = ['GPT', 'Claude', 'Gemini', 'DeepSeek', 'Qwen', 'G
 // Fallback model for any seat without an explicit one (e.g. a custom name).
 export const FALLBACK_MODEL = 'google/gemini-2.5-flash';
 
-// Standard role distribution by table size. Specials are town, so they don't
-// worsen Mafia≥Town parity. Tuned so a single night kill can never instantly end
-// the game, and so a full table shows off every role (Mafia coord + Detective + Doctor).
-//   n≥5 → a Detective (town gains information)
-//   n≥6 → a Doctor (town gains protection)
-// `mafiaOverride` lets the lobby pick the Mafia count (1–3); it's clamped to keep
-// Mafia a strict minority (mafia < town) so the game can't open already-decided.
-export function roleDistribution(n: number, mafiaOverride?: number): string[] {
-  const mafiaCount =
-    mafiaOverride != null
-      ? Math.max(1, Math.min(Math.round(mafiaOverride), Math.floor((n - 1) / 2)))
-      : n <= 5 ? 1 : n <= 8 ? 2 : 3;
-  const detectives = n >= 5 ? 1 : 0;
-  const doctors = n >= 6 ? 1 : 0;
+// Build the role multiset from an already-resolved composition (see
+// games/mafia/config.ts → roleComposition). Specials are TOWN, so they never worsen
+// Mafia≥Town parity. The composition is the single place table balance is decided;
+// this just expands it into a flat list of role strings of length `total`.
+export interface RoleCounts {
+  mafia: number;
+  detective: number;
+  doctor: number;
+  villager: number;
+  total: number;
+}
+export function roleDistribution(counts: RoleCounts): string[] {
   const roles: string[] = [];
-  for (let i = 0; i < mafiaCount; i++) roles.push(ROLE.MAFIA);
-  for (let i = 0; i < detectives; i++) roles.push(ROLE.DETECTIVE);
-  for (let i = 0; i < doctors; i++) roles.push(ROLE.DOCTOR);
-  while (roles.length < n) roles.push(ROLE.VILLAGER);
+  for (let i = 0; i < counts.mafia; i++) roles.push(ROLE.MAFIA);
+  for (let i = 0; i < counts.detective; i++) roles.push(ROLE.DETECTIVE);
+  for (let i = 0; i < counts.doctor; i++) roles.push(ROLE.DOCTOR);
+  while (roles.length < counts.total) roles.push(ROLE.VILLAGER);
   return roles;
 }

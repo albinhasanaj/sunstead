@@ -8,6 +8,7 @@ export type Turn = {
   phase: string;
   legal: string[];
   alive: NameRef[];
+  voteTargets?: NameRef[]; // restricted to the runoff slate during a dayVoteTie revote
   killTargets: NameRef[];
   investigateTargets: NameRef[];
   protectTargets: NameRef[];

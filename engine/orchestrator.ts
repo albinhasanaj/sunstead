@@ -12,8 +12,15 @@ export type TurnFn = (
 ) => Promise<void>;
 
 // Cap on simultaneous LLM turns in a parallel phase (e.g. voting), so we don't
-// trigger a provider rate-limit burst. Override with MAFIA_PARALLEL_LIMIT.
-const PARALLEL_LIMIT = Number(process.env.MAFIA_PARALLEL_LIMIT ?? 8);
+// trigger a provider rate-limit burst. A fixed engine-level concurrency bound.
+const PARALLEL_LIMIT = 8;
+
+// beatPhases / parallelPhases may be a static list or a function of state (so a game
+// can decide per-game, e.g. from its resolved config). Normalise to a list here.
+function phaseList(v: string[] | ((s: GameState) => string[]) | undefined, state: GameState): string[] {
+  if (!v) return [];
+  return typeof v === 'function' ? v(state) : v;
+}
 
 // Run fn over items with at most `limit` of them in flight at once.
 async function runConcurrent<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -58,9 +65,12 @@ export async function runGame(
     const aliveNow = state.players.filter((p) => p.alive).length;
     console.log(`\n[phase] ══ ${state.phase} · round ${state.round} ══ (${aliveNow} alive)`);
 
+    const beatPhases = phaseList(def.beatPhases, state);
+    const parallelPhases = phaseList(def.parallelPhases, state);
+
     // Reactive phases (e.g. discussion): the game picks the next speaker per beat
     // based on who's most motivated, so the table feels alive instead of round-robin.
-    if (def.beatPhases?.includes(state.phase) && def.nextSpeaker) {
+    if (beatPhases.includes(state.phase) && def.nextSpeaker) {
       let id: string | null;
       // nextSpeaker may be async (the optional paid "live urge" path); await covers both.
       while ((id = await def.nextSpeaker(state)) !== null) {
@@ -74,13 +84,16 @@ export async function runGame(
         // Pace to the client's voice + fold in any human interjection before the next beat.
         if (beatHook) await beatHook(state);
       }
-    } else if (def.parallelPhases?.includes(state.phase)) {
+    } else if (parallelPhases.includes(state.phase)) {
       // Independent actions (e.g. secret simultaneous votes): every seat
-      // deliberates at once, capped so we don't trigger a rate-limit burst.
+      // deliberates at once, capped so we don't trigger a rate-limit burst. We still
+      // fire onTurnStart per actor (e.g. night wake-ups) so that hook isn't dead in
+      // the parallel path — spec §9.
       const actors = def
         .turnOrder(state)
         .map((id) => state.players.find((p) => p.id === id))
         .filter((a): a is AgentState => !!a && a.alive);
+      for (const a of actors) def.onTurnStart?.(state, a, emit);
       await runConcurrent(actors, PARALLEL_LIMIT, (agent) => turnFn(def, state, agent, emit));
     } else {
       for (const id of def.turnOrder(state)) {

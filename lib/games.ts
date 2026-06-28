@@ -9,7 +9,7 @@ export interface StartGameInput {
   id: string; // gameId (same id used for statements.game_id and the SSE session)
   userId: string; // owner
   mode: 'play' | 'watch';
-  settings?: Record<string, unknown>; // e.g. { mafiaCount: 1 }
+  settings?: unknown; // the full resolved MafiaConfig (incl. seed) — auditable & reproducible
 }
 
 // Insert the game row at kickoff. Idempotent on id so a retry can't duplicate it.

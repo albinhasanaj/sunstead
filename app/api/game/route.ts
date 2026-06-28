@@ -6,11 +6,8 @@ import { PERSONALITIES } from '@/games/mafia/roles';
 import type { AgentState, GameEvent, GameState, GameTool } from '@/engine/types';
 import { sessions, type GameSession, type HumanChoice } from '@/lib/gameSessions';
 import { startGame, finishGame } from '@/lib/games';
-
-// Discussion paces to the client's voice: after each AI beat the loop waits (up to
-// this long) for the client to finish voicing it before the next beat, so AI talk
-// never races ahead of the audio. The wait ends early on a human interjection.
-const PACE_MAX_MS = Number(process.env.MAFIA_PACE_MAX_MS ?? 14000);
+import { resolveConfig, type MafiaConfig } from '@/games/mafia/config';
+import { rngFloat } from '@/games/mafia/rng';
 
 // The game is a long-running multi-agent sim; we run it inside a streaming
 // response and push each typed GameEvent to the client as it happens (SSE).
@@ -48,7 +45,17 @@ function cleanHumanName(raw: unknown): string {
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const mode: 'watch' | 'play' = body?.mode === 'play' ? 'play' : 'watch';
-  const turnDelayMs = Number(process.env.MAFIA_TURN_DELAY_MS ?? body?.turnDelayMs ?? 0);
+
+  // ── Resolve the ONE game config (spec §2) ─────────────────────────────────────
+  // The lobby serializes its chosen settings into body.config; we also accept the
+  // legacy top-level mafiaCount for backward compatibility. resolveConfig defaults,
+  // clamps, and validates everything (§2.4) — all per-game behavior flows from here,
+  // not from env on this path. It runs ONCE; setup() stamps it onto state.meta.config.
+  const config: MafiaConfig = resolveConfig({
+    ...(body?.config && typeof body.config === 'object' ? body.config : {}),
+    ...(body?.mafiaCount != null ? { mafiaCount: Number(body.mafiaCount) } : {}),
+  });
+  const turnDelayMs = config.turnDelayMs;
 
   // In play mode the human takes a real name from their profile; watch mode has no
   // human seat so the name is irrelevant.
@@ -70,15 +77,10 @@ export async function POST(req: Request) {
   const mafiaChance =
     mode === 'play' && Number.isFinite(Number(body?.mafiaChance)) ? Math.min(100, Math.max(0, Number(body.mafiaChance))) : null;
 
-  // Lobby setting: how many Mafia at the table (1–3, default 1). Town stays fixed at
-  // 5 seats, so the table grows to 6–8 players and Mafia is always a strict minority.
-  const mafiaCount = Math.min(3, Math.max(1, Math.round(Number(body?.mafiaCount)) || 1));
-  const TOWN_SEATS = 5;
-  const totalSeats = mafiaCount + TOWN_SEATS;
-
-  // Roster. PERSONALITIES holds 8 named seats — enough for a full 5-town + 3-Mafia
-  // table. In play mode we seat the human alongside the AI players; drop any AI whose
-  // name collides with the human's so the seat name stays unique.
+  // Roster sized to config.tableSize (the human seat is counted, spec §2.4.4).
+  // PERSONALITIES holds enough named seats for the largest table; in play mode we
+  // seat the human alongside them, dropping any AI whose name collides with theirs.
+  const totalSeats = config.tableSize;
   const AI_POOL = PERSONALITIES.map((p) => p.name);
   let names: string[] = Array.isArray(body?.names) && body.names.length ? body.names : [];
   if (mode === 'play') {
@@ -106,10 +108,13 @@ export async function POST(req: Request) {
 
       let humanId: string | null = null;
       let humanIsMafia = false;
+      let humanRole = '';
 
       // In play mode, hide what a fair player shouldn't see: AI private reasoning,
       // other roles, the Mafia channel (unless the human is Mafia), other players'
       // night actions, and other players' private findings (e.g. an AI Detective's).
+      // The filter is the WIRE-level guard (spec §9): hidden facts must not reach the
+      // client at all, not merely go unrendered.
       const emit = (e: GameEvent) => {
         if (mode === 'play') {
           if (e.type === 'beliefs') return;
@@ -118,6 +123,16 @@ export async function POST(req: Request) {
           // teammates' kill proposals (propose_kill is a Mafia-only action).
           if (e.type === 'action' && e.agent !== humanId && !(humanIsMafia && e.kind === 'propose_kill')) return;
           if (e.type === 'knowledge' && e.agent !== humanId) return;
+          // Wake narration leaks role composition over rounds (which specials are still
+          // alive). Let the atmospheric 'mafia' wake through, and the human's OWN role,
+          // but suppress detective/doctor wakes for everyone else (§9 [FIX]).
+          if (e.type === 'wake' && e.role !== 'mafia' && e.role !== humanRole) return;
+          // Hidden-role game: strip the dead player's true role from the wire unless
+          // config.revealRoleOnDeath, or it's the human's own death (they know it).
+          if ((e.type === 'death' || e.type === 'reveal') && !config.revealRoleOnDeath && e.target !== humanId) {
+            send({ ...e, role: undefined });
+            return;
+          }
         }
         send(e);
       };
@@ -168,11 +183,12 @@ export async function POST(req: Request) {
         if (state.phase !== 'DISCUSSION') return;
         await injectPendingSay(state);
         const startSeq = session.voiceDoneSeq ?? 0;
-        const deadline = Date.now() + PACE_MAX_MS;
+        const deadline = Date.now() + config.paceMaxMs;
         for (;;) {
           if (session.closed || session.pendingSay) break; // human cut in → react now
           const composing = (session.composingUntil ?? 0) > Date.now();
           const voiced = (session.voiceDoneSeq ?? 0) > startSeq;
+          if (!config.voiceEnabled) break; // voice off → don't pace to audio
           if (!composing && (voiced || Date.now() > deadline)) break;
           await new Promise<void>((resolve) => {
             session.wake = resolve; // woken instantly by a say/composing/voiceDone POST
@@ -208,8 +224,9 @@ export async function POST(req: Request) {
             state.meta.gameId = gameId; // align long-term memory with this SSE session
             state.meta.userId = userId; // stamp every memory row with the owning user
             session.state = state; // let the action route flip control flags (e.g. skip-to-vote)
-            // Record the game row (owner + settings). Best-effort, never blocks the loop.
-            void startGame({ id: gameId, userId, mode, settings: { mafiaCount } });
+            // Record the game row with the FULL resolved config + seed (spec §2.4.5),
+            // so a game is auditable and reproducible. Best-effort, never blocks the loop.
+            void startGame({ id: gameId, userId, mode, settings: config });
             if (mode === 'play') {
               const h = state.players.find((p) => p.name === humanName);
               if (h) {
@@ -223,7 +240,8 @@ export async function POST(req: Request) {
                 } else if (!devRole && mafiaChance != null) {
                   // Pity roll: swap the human into / out of a Mafia seat to match the
                   // requested odds, trading roles with another player so counts hold.
-                  const wantMafia = Math.random() * 100 < mafiaChance;
+                  // Drawn from the game's seeded stream so it's part of replay (§10).
+                  const wantMafia = rngFloat(state) * 100 < mafiaChance;
                   if (wantMafia && h.role !== 'mafia') {
                     const other = state.players.find((p) => p.id !== h.id && p.role === 'mafia');
                     if (other) {
@@ -241,10 +259,13 @@ export async function POST(req: Request) {
                 h.private.human = true;
                 humanId = h.id;
                 humanIsMafia = h.role === 'mafia';
+                humanRole = h.role;
                 session.humanId = h.id;
               }
             }
-            send({ type: 'game', gameId, mode, humanId });
+            // Echo the resolved config so the client reflects server-clamped settings
+            // (e.g. voiceEnabled default, revealRoleOnDeath) rather than only its local copy.
+            send({ type: 'game', gameId, mode, humanId, config });
             send({
               type: 'setup',
               phase: state.phase,
@@ -263,7 +284,7 @@ export async function POST(req: Request) {
           turnFn,
           turnDelayMs,
           beatHook,
-          { mafiaCount },
+          { config },
         );
       } catch (err) {
         send({ type: 'error', message: (err as Error).message });
@@ -300,6 +321,9 @@ function requestAction(state: GameState, agent: AgentState, tools: GameTool[]) {
   const names = (ps: AgentState[]) => ps.map((p) => ({ id: p.id, name: p.name }));
   const alive = state.players.filter((p) => p.alive);
   const aliveOthers = alive.filter((p) => p.id !== agent.id);
+  // During a runoff (dayVoteTie:'revote') only the tied seats are eligible to vote for.
+  const revoteAmong = state.meta.revoteAmong as string[] | null | undefined;
+  const voteEligible = revoteAmong?.length ? aliveOthers.filter((p) => revoteAmong.includes(p.id)) : aliveOthers;
   return {
     type: 'request_action',
     agent: agent.id,
@@ -307,6 +331,7 @@ function requestAction(state: GameState, agent: AgentState, tools: GameTool[]) {
     round: state.round,
     legal: tools.map((t) => t.name),
     alive: names(aliveOthers),
+    voteTargets: names(voteEligible), // restricted to the runoff slate when revoting
     killTargets: names(aliveOthers.filter((p) => p.role !== 'mafia')),
     investigateTargets: names(aliveOthers), // Detective: anyone but yourself
     // Doctor: anyone alive (including yourself) EXCEPT whoever you shielded last

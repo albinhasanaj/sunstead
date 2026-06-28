@@ -6,6 +6,7 @@ import { Eye, EyeOff, Users, ScrollText, LogOut, Timer, SkipForward, Gavel, Chec
 import TribunalScene from './TribunalScene';
 import { useMafiaGame } from './useMafiaGame';
 import { FLOAT_BTN, ROLE_STYLE } from './constants';
+import type { MafiaConfig, PresetName } from '@/games/mafia/config';
 import AnnouncementBanner from './_components/AnnouncementBanner';
 import DeathScreen from './_components/DeathScreen';
 import IntroOverlay from './_components/IntroOverlay';
@@ -25,9 +26,10 @@ export default function Home() {
   const [intro, setIntro] = useState<null | 'play' | 'watch'>(null);
   // Dev-only: force your role for testing (empty = random). Sent to the API.
   const [devRole, setDevRole] = useState('');
-  // Lobby setting: how many Mafia at the table (1–3, default 1). Sent to the API,
-  // which grows the table to keep Mafia a minority (5 town + this many Mafia).
-  const [mafiaCount, setMafiaCount] = useState(1);
+  // Lobby config: a Partial<MafiaConfig> the settings panel edits, plus the chosen
+  // preset. The full config is resolved server-side; we send this patch to the API.
+  const [configPatch, setConfigPatch] = useState<Partial<MafiaConfig>>({});
+  const [preset, setPreset] = useState<PresetName>('classic');
   // Watch mode: reveal every agent's secret role (overhead tags + drawer badges).
   // Defaults on so spectators can see who the Mafia is; toggle off for a blind watch.
   const [revealRoles, setRevealRoles] = useState(true);
@@ -260,16 +262,18 @@ export default function Home() {
           winner={winner}
           devRole={devRole}
           setDevRole={setDevRole}
-          mafiaCount={mafiaCount}
-          setMafiaCount={setMafiaCount}
+          configPatch={configPatch}
+          setConfigPatch={setConfigPatch}
+          preset={preset}
+          setPreset={setPreset}
           mafiaChance={mafiaChance}
           onPlay={() => {
             setIntro('play');
-            start('play', devRole, mafiaCount);
+            start('play', devRole, configPatch);
           }}
           onWatch={() => {
             setIntro('watch');
-            start('watch', undefined, mafiaCount);
+            start('watch', undefined, configPatch);
           }}
         />
       )}
