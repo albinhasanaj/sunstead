@@ -113,26 +113,24 @@ const STATIC_DEFAULTS: Omit<MafiaConfig, 'tableSize' | 'mafiaCount' | 'enableDet
 };
 
 // ── Presets (§2.3) — named partial patches the lobby applies in one click ──────
+// Each preset only lists the fields it actually CHANGES from the defaults, so a
+// preset never quietly re-asserts a default value as if it were a setting.
 export const PRESETS: Record<string, Partial<MafiaConfig>> = {
   classic: {},
   casual: { revealRoleOnDeath: true, allowNoLynch: true, difficulty: 'casual', discussionRounds: 3 },
-  hardcore: { revealRoleOnDeath: false, difficulty: 'cunning', firstNightKill: true, doctorRepeatProtect: false },
-  chaos: { mafiaCount: 3, tableSize: 9, discussionRounds: 1, dayVoteTie: 'random', liveUrge: true },
-  speedrun: { discussionRounds: 1, parallelNight: true, parallelVote: true, turnDelayMs: 0, voiceEnabled: false },
-  showcase: { voiceEnabled: true, paceMaxMs: 14000, turnDelayMs: 800, reactiveDiscussion: true },
+  hardcore: { difficulty: 'cunning', firstNightKill: true },
+  chaos: { tableSize: 9, mafiaCount: 3, discussionRounds: 1 },
   // A full 15-seat table (3 Mafia, Detective, Doctor, 10 Townspeople) — the model
   // battle royale, where every distinct lab takes a seat and we see who survives.
-  battle: { tableSize: 15, mafiaCount: 3, enableDetective: true, enableDoctor: true, discussionRounds: 2, difficulty: 'cunning' },
+  battle: { tableSize: 15, mafiaCount: 3, difficulty: 'cunning' },
 };
 export type PresetName = keyof typeof PRESETS;
 
 export const PRESET_META: { name: PresetName; label: string; blurb: string }[] = [
   { name: 'classic', label: 'Classic', blurb: 'Balanced default' },
   { name: 'casual', label: 'Casual', blurb: 'Forgiving, easy to read' },
-  { name: 'hardcore', label: 'Hardcore', blurb: 'Hidden, ruthless AIs' },
-  { name: 'chaos', label: 'Chaos', blurb: 'Big, fast, unpredictable' },
-  { name: 'speedrun', label: 'Speedrun', blurb: 'Minimal latency' },
-  { name: 'showcase', label: 'Showcase', blurb: 'Slow, voiced, dramatic' },
+  { name: 'hardcore', label: 'Hardcore', blurb: 'Ruthless AIs, night-1 kill' },
+  { name: 'chaos', label: 'Chaos', blurb: 'Big & fast — 9 seats, 3 Mafia' },
   { name: 'battle', label: 'Battle', blurb: '15 seats, every model' },
 ];
 

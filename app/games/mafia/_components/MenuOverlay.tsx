@@ -1,12 +1,15 @@
 'use client';
 
 // Full-screen menu — a dark overlay over the scene; doubles as the entry and
-// game-over screen. The lobby's settings surface (presets + toggles + role readout +
-// advanced disclosure, spec §2.5) lives in <LobbySettings>; this owns the framing,
-// the pity-odds readout, the dev-role picker, and the Play/Watch buttons.
+// game-over screen. The lobby's settings (presets + role readout + advanced, spec
+// §2.5) open in a dedicated POPUP so they get the full screen to breathe instead of
+// cramming under the title; this owns the framing, the trigger button, the pity-odds
+// readout, the dev-role picker, and the Play/Watch buttons.
 
+import { useState } from 'react';
+import { SlidersHorizontal, X } from 'lucide-react';
 import LobbySettings from './LobbySettings';
-import type { MafiaConfig, PresetName } from '@/games/mafia/config';
+import { PRESET_META, type MafiaConfig, type PresetName } from '@/games/mafia/config';
 
 export default function MenuOverlay({
   winner,
@@ -31,8 +34,11 @@ export default function MenuOverlay({
   onPlay: () => void;
   onWatch: () => void;
 }) {
+  const [showSettings, setShowSettings] = useState(false);
+  const presetLabel = PRESET_META.find((p) => p.name === preset)?.label ?? 'Custom';
+
   return (
-    <div className="absolute inset-0 z-30 flex flex-col items-center overflow-y-auto px-6 py-10 text-center bg-gradient-to-b from-black/70 via-black/80 to-black/90 backdrop-blur-md">
+    <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 text-center bg-gradient-to-b from-black/70 via-black/80 to-black/90 backdrop-blur-md">
       <p className="text-[11px] font-semibold uppercase tracking-[0.45em] text-amber-300/70">The Tribunal</p>
       <h1 className="mt-3 bg-gradient-to-b from-white to-neutral-400 bg-clip-text text-5xl font-bold tracking-tight text-transparent">
         Agentic Mafia
@@ -48,8 +54,15 @@ export default function MenuOverlay({
         </p>
       )}
 
-      {/* Settings: presets, role composition, and every User/Advanced knob (§2). */}
-      <LobbySettings patch={configPatch} setPatch={setConfigPatch} preset={preset} setPreset={setPreset} />
+      {/* Settings trigger — opens the popup. Shows the active gamestyle at a glance. */}
+      <button
+        onClick={() => setShowSettings(true)}
+        className="mt-8 flex items-center gap-2 rounded-full border border-neutral-700/70 bg-neutral-950/60 px-4 py-2 text-[12px] text-neutral-300 transition hover:border-neutral-500 hover:text-neutral-100"
+      >
+        <SlidersHorizontal className="h-3.5 w-3.5" />
+        Game settings
+        <span className="ml-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-200">{presetLabel}</span>
+      </button>
 
       {/* Pity odds: your personal chance of drawing Mafia when you take a seat —
           it climbs every game you don't, and resets the game you do. */}
@@ -82,6 +95,46 @@ export default function MenuOverlay({
           </label>
         )}
       </div>
+
+      {/* ── Settings popup ──────────────────────────────────────────────── */}
+      {showSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => setShowSettings(false)}
+        >
+          <div
+            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-neutral-700/70 bg-neutral-950/95 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* header */}
+            <div className="flex items-center justify-between border-b border-neutral-800 px-6 py-4">
+              <h2 className="text-sm font-semibold tracking-wide text-neutral-100">Game settings</h2>
+              <button
+                onClick={() => setShowSettings(false)}
+                className="flex h-7 w-7 items-center justify-center rounded-full text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-100"
+                aria-label="Close settings"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* scrollable body */}
+            <div className="flex justify-center overflow-y-auto px-6 py-5">
+              <LobbySettings patch={configPatch} setPatch={setConfigPatch} preset={preset} setPreset={setPreset} />
+            </div>
+
+            {/* footer */}
+            <div className="flex justify-end border-t border-neutral-800 px-6 py-3">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="rounded-lg border border-amber-400/50 bg-amber-500/15 px-5 py-1.5 text-[12px] font-semibold text-amber-200 transition hover:bg-amber-500/25"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
