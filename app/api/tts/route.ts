@@ -1,5 +1,6 @@
 import { synthesize, TTS_MODEL } from '@/voice/tts';
 import { DEFAULT_VOICE, voiceFor } from '@/voice/voiceMap';
+import { coerceEmotion, coerceIntensity, type Expression } from '@/voice/emotion';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,8 +17,15 @@ export async function POST(req: Request) {
 
   const voiceId: string = body?.voiceId || (body?.agent ? voiceFor(body.agent) : DEFAULT_VOICE);
 
+  // The public expression riding the spoken line → flash voiceSettings (Stage 1).
+  // Always present (degrades to neutral); absent emotion keys behave like before.
+  const expression: Expression | undefined =
+    body?.emotion != null || body?.intensity != null
+      ? { emotion: coerceEmotion(body.emotion), intensity: coerceIntensity(body.intensity) }
+      : undefined;
+
   const tryVoice = async (vid: string) => {
-    const audio = await synthesize(vid, text);
+    const audio = await synthesize(vid, text, { expression });
     return new Response(new Blob([audio as BlobPart], { type: 'audio/mpeg' }), {
       headers: {
         'Content-Type': 'audio/mpeg',
