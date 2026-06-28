@@ -327,19 +327,28 @@ function requestAction(state: GameState, agent: AgentState, tools: GameTool[]) {
   // During a runoff (dayVoteTie:'revote') only the tied seats are eligible to vote for.
   const revoteAmong = state.meta.revoteAmong as string[] | null | undefined;
   const voteEligible = revoteAmong?.length ? aliveOthers.filter((p) => revoteAmong.includes(p.id)) : aliveOthers;
+  // Only send a target list when its tool is actually LEGAL for this seat this turn.
+  // This is a §9 wire guard, not just tidiness: killTargets excludes the Mafia, so
+  // sending it to a non-Mafia human leaks the entire Mafia by set-difference against
+  // `alive`. Gating on legality keeps killTargets off the wire unless the human really
+  // is the Mafia taking their night kill (where they already know their teammates).
+  // The client only ever reads each list when its tool is in `legal`, so this changes
+  // no UI behaviour — it just stops hidden roles from reaching the client at all.
+  const legal = tools.map((t) => t.name);
+  const can = (name: string) => legal.includes(name);
   return {
     type: 'request_action',
     agent: agent.id,
     phase: state.phase,
     round: state.round,
-    legal: tools.map((t) => t.name),
+    legal,
     alive: names(aliveOthers),
-    voteTargets: names(voteEligible), // restricted to the runoff slate when revoting
-    killTargets: names(aliveOthers.filter((p) => p.role !== 'mafia')),
-    investigateTargets: names(aliveOthers), // Detective: anyone but yourself
+    voteTargets: can('vote') ? names(voteEligible) : [], // restricted to the runoff slate when revoting
+    killTargets: can('mafia_propose_kill') ? names(aliveOthers.filter((p) => p.role !== 'mafia')) : [],
+    investigateTargets: can('investigate') ? names(aliveOthers) : [], // Detective: anyone but yourself
     // Doctor: anyone alive (including yourself) EXCEPT whoever you shielded last
     // night — you can't protect the same player two nights in a row.
-    protectTargets: names(alive.filter((p) => p.id !== state.meta.lastProtect)),
+    protectTargets: can('protect') ? names(alive.filter((p) => p.id !== state.meta.lastProtect)) : [],
     teammates: agent.role === 'mafia' ? names(state.players.filter((p) => p.alive && p.role === 'mafia' && p.id !== agent.id)) : [],
   };
 }

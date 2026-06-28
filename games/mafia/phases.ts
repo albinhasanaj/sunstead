@@ -327,7 +327,20 @@ function resolveNight(state: GameState, emit: Emit): void {
     return;
   }
 
-  // No kill landed (suppressed first night, no target settled, or a 'no_kill' tie).
+  // §1 firstNightKill OFF: round 1's deathless dawn is mandated by the RULES — not a
+  // doctor save, not the Mafia holding back. Announce it as such so the agents (who
+  // read the public log) don't treat it as a meaningful anomaly and muse "weird that
+  // no one died" about an outcome the ruleset made inevitable.
+  if (firstNightSuppressed) {
+    emit({ type: 'night', outcome: 'night0' });
+    state.publicLog.push({
+      speaker: 'system',
+      text: 'Dawn breaks on the first day. By the town’s rules no one can be killed on the opening night, so everyone is still here. The hunt for the Mafia begins now.',
+    });
+    return;
+  }
+
+  // No kill landed (no target settled, or a 'no_kill' tie).
   emit({ type: 'night', outcome: 'quiet' });
   state.publicLog.push({ speaker: 'system', text: 'Dawn breaks. The night passed quietly — no one died.' });
 }

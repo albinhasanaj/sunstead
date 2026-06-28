@@ -117,9 +117,10 @@ export type GameEvent =
   | { type: 'vote'; agent: PlayerId; target: PlayerId }
   | { type: 'reveal'; target: PlayerId; role?: string }
   // Anonymous night outcome when no one dies: 'saved' = the Mafia's target was
-  // protected by the doctor; 'quiet' = no kill landed. Carries no ids — no one
-  // learns who was targeted or who saved them.
-  | { type: 'night'; outcome: 'saved' | 'quiet' }
+  // protected by the doctor; 'quiet' = no kill landed; 'night0' = the opening night,
+  // which is a guaranteed no-kill BY THE RULES (config.firstNightKill off), not an
+  // anomaly. Carries no ids — no one learns who was targeted or who saved them.
+  | { type: 'night'; outcome: 'saved' | 'quiet' | 'night0' }
   // A night role is about to act now (anonymous — role only, never who). Lets the
   // UI narrate "the Detective wakes up" exactly when they actually do.
   | { type: 'wake'; role: string }

@@ -302,6 +302,11 @@ export function useMafiaGame() {
             setFeed((f) => [...f, { k: 'system', text: '🛡 The Mafia struck — but the doctor saved their target. No one died.' }]);
             showAnnounce({ eyebrow: "The doctor's work", title: 'A life was saved', face: null, tone: 'save' });
             playSfx('reveal');
+          } else if (e.outcome === 'night0') {
+            // The opening night is a guaranteed no-kill by the rules — frame it that
+            // way, not as a mysteriously "quiet" night.
+            setFeed((f) => [...f, { k: 'system', text: '🌙 No one can be killed on the first night — the hunt begins.' }]);
+            showAnnounce({ eyebrow: 'Dawn breaks', title: 'A peaceful first night', face: null, tone: 'quiet' });
           } else {
             setFeed((f) => [...f, { k: 'system', text: '🌙 The night passed quietly — no one died.' }]);
             showAnnounce({ eyebrow: 'Dawn breaks', title: 'A quiet night', face: null, tone: 'quiet' });
