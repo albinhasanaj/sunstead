@@ -358,6 +358,7 @@ export function useMafiaGame() {
       // Voice is a config toggle — default the mute state to it (server echoes the
       // resolved value on the 'game' event, which we honor too).
       setVoiceOn(config?.voiceEnabled !== false);
+      voice.prime(); // we're in the Play/Watch click gesture — wake the audio context now
       voice.reset();
 
       // Start the looping tension bed (first load generates it server-side, ~5s).
@@ -671,6 +672,9 @@ export function useMafiaGame() {
     thinkingLabel,
     // helpers + actions
     nameOf,
+    // Live voice loudness (0..1) for the 3D scene's speaking-seat glow. Stable getter
+    // sampled per animation frame, so it never triggers React re-renders.
+    getAudioLevel: voice.getLevel,
     start,
     submitAction,
     skipTurn,

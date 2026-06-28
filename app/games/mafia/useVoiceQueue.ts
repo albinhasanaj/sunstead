@@ -31,6 +31,84 @@ export function useVoiceQueue() {
   // the queue (pausing alone never fires 'ended').
   const finishRef = useRef<(() => void) | null>(null);
 
+  // ── live voice amplitude (drives the speaking seat's glow in the 3D scene) ──────
+  // A single Web Audio graph: each line's <audio> is routed through one shared
+  // AnalyserNode → destination, so getLevel() can sample the current loudness (0..1)
+  // every animation frame. Created lazily on first playback (needs a user gesture).
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const dataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  // A MediaElementSource can be created ONCE per element, so we cache it per <audio>.
+  const sourceFor = useRef<WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>>(new WeakMap());
+
+  // Lazily build the shared AudioContext + AnalyserNode (returns null if unavailable).
+  const getCtx = useCallback((): AudioContext | null => {
+    if (audioCtxRef.current) return audioCtxRef.current;
+    try {
+      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!Ctx) return null;
+      const ctx = new Ctx();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.6; // snappier → the glow tracks syllables, not a smear
+      analyser.connect(ctx.destination);
+      audioCtxRef.current = ctx;
+      analyserRef.current = analyser;
+      dataRef.current = new Uint8Array(analyser.frequencyBinCount);
+      return ctx;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Call from a user gesture (e.g. the Play button) so the context is 'running' before
+  // any line plays. Without this, browsers start it suspended and routing audio through
+  // it would mute playback — so we only hijack the element's output once it's running.
+  const prime = useCallback(() => {
+    const ctx = getCtx();
+    if (ctx && ctx.state !== 'running') void ctx.resume();
+  }, [getCtx]);
+
+  const ensureGraph = useCallback(
+    (audio: HTMLAudioElement) => {
+      try {
+        const ctx = getCtx();
+        const analyser = analyserRef.current;
+        if (!ctx || !analyser) return;
+        // While suspended, DON'T route the element through the graph — that would mute
+        // it. Let it play normally (no analysis this line) and nudge the context awake.
+        if (ctx.state !== 'running') {
+          void ctx.resume();
+          return;
+        }
+        let src = sourceFor.current.get(audio);
+        if (!src) {
+          src = ctx.createMediaElementSource(audio);
+          src.connect(analyser); // analyser already feeds destination, so we still hear it
+          sourceFor.current.set(audio, src);
+        }
+      } catch {
+        /* Web Audio unavailable / blocked — the glow just falls back to its idle pulse */
+      }
+    },
+    [getCtx],
+  );
+
+  // Current voice loudness, 0..1, sampled live. Returns 0 when nothing is speaking.
+  const getLevel = useCallback((): number => {
+    const analyser = analyserRef.current;
+    const data = dataRef.current;
+    if (!analyser || !data || !playing.current) return 0;
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sum += v * v;
+    }
+    const rms = Math.sqrt(sum / data.length);
+    return Math.min(1, rms * 3.2); // scale typical speech RMS up into a visible range
+  }, []);
+
   const setIdle = useCallback((v: boolean) => {
     if (idle.current === v) return;
     idle.current = v;
@@ -58,6 +136,7 @@ export function useVoiceQueue() {
         const url = URL.createObjectURL(await res.blob());
         const audio = new Audio(url);
         audioRef.current = audio;
+        ensureGraph(audio); // route through the analyser so getLevel() tracks this line
         await new Promise<void>((resolve) => {
           finishRef.current = resolve;
           audio.onended = () => resolve();
@@ -78,7 +157,7 @@ export function useVoiceQueue() {
     playing.current = false;
     if (queue.current.length) void pump();
     else setIdle(true);
-  }, [setIdle]);
+  }, [setIdle, ensureGraph]);
 
   const enqueue = useCallback(
     (item: VoiceItem) => {
@@ -119,5 +198,5 @@ export function useVoiceQueue() {
   }, []);
 
   // Stable object so consumers' useCallback deps don't churn every render.
-  return useMemo(() => ({ enqueue, setEnabled, reset, bind }), [enqueue, setEnabled, reset, bind]);
+  return useMemo(() => ({ enqueue, setEnabled, reset, bind, getLevel, prime }), [enqueue, setEnabled, reset, bind, getLevel, prime]);
 }
