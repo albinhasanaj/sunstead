@@ -9,16 +9,14 @@
 import { useState } from 'react';
 import { SlidersHorizontal, X } from 'lucide-react';
 import LobbySettings from './LobbySettings';
-import { PRESET_META, type MafiaConfig, type PresetName } from '@/games/mafia/config';
+import { PRESET_META, type ConfigSelection } from '@/games/mafia/config';
 
 export default function MenuOverlay({
   winner,
   devRole,
   setDevRole,
-  configPatch,
-  setConfigPatch,
-  preset,
-  setPreset,
+  selection,
+  setSelection,
   mafiaChance,
   onPlay,
   onWatch,
@@ -26,16 +24,14 @@ export default function MenuOverlay({
   winner: string | null;
   devRole: string;
   setDevRole: (role: string) => void;
-  configPatch: Partial<MafiaConfig>;
-  setConfigPatch: (p: Partial<MafiaConfig>) => void;
-  preset: PresetName;
-  setPreset: (p: PresetName) => void;
+  selection: ConfigSelection;
+  setSelection: (s: ConfigSelection) => void;
   mafiaChance: number;
   onPlay: () => void;
   onWatch: () => void;
 }) {
   const [showSettings, setShowSettings] = useState(false);
-  const presetLabel = PRESET_META.find((p) => p.name === preset)?.label ?? 'Custom';
+  const presetLabel = PRESET_META.find((p) => p.name === selection.preset)?.label ?? 'Custom';
 
   return (
     <div className="absolute inset-0 z-30 flex flex-col items-center justify-center px-6 text-center bg-gradient-to-b from-black/70 via-black/80 to-black/90 backdrop-blur-md">
@@ -120,7 +116,7 @@ export default function MenuOverlay({
 
             {/* scrollable body */}
             <div className="flex justify-center overflow-y-auto px-6 py-5">
-              <LobbySettings patch={configPatch} setPatch={setConfigPatch} preset={preset} setPreset={setPreset} />
+              <LobbySettings selection={selection} setSelection={setSelection} />
             </div>
 
             {/* footer */}

@@ -6,7 +6,7 @@ import { PERSONALITIES } from '@/games/mafia/roles';
 import type { AgentState, GameEvent, GameState, GameTool } from '@/engine/types';
 import { sessions, type GameSession, type HumanChoice } from '@/lib/gameSessions';
 import { startGame, finishGame } from '@/lib/games';
-import { resolveConfig, type MafiaConfig } from '@/games/mafia/config';
+import { resolveConfig, type ConfigSelection, type MafiaConfig } from '@/games/mafia/config';
 import { rngFloat } from '@/games/mafia/rng';
 
 // The game is a long-running multi-agent sim; we run it inside a streaming
@@ -47,14 +47,18 @@ export async function POST(req: Request) {
   const mode: 'watch' | 'play' = body?.mode === 'play' ? 'play' : 'watch';
 
   // ── Resolve the ONE game config (spec §2) ─────────────────────────────────────
-  // The lobby serializes its chosen settings into body.config; we also accept the
-  // legacy top-level mafiaCount for backward compatibility. resolveConfig defaults,
-  // clamps, and validates everything (§2.4) — all per-game behavior flows from here,
-  // not from env on this path. It runs ONCE; setup() stamps it onto state.meta.config.
-  const config: MafiaConfig = resolveConfig({
-    ...(body?.config && typeof body.config === 'object' ? body.config : {}),
-    ...(body?.mafiaCount != null ? { mafiaCount: Number(body.mafiaCount) } : {}),
-  });
+  // The lobby sends a tiered SELECTION (preset + difficulty + gameSpeed + the sparse
+  // userOverrides the host explicitly changed); we re-run the SAME resolveConfig the
+  // UI previews with, never trusting a client-sent resolved config (§2.5). Legacy
+  // clients that send a flat body.config (and/or top-level mafiaCount) still work —
+  // we fold those into userOverrides. resolveConfig defaults, clamps, and validates
+  // everything (§2.4); it runs ONCE and setup() stamps it onto state.meta.config.
+  const legacyMafia = body?.mafiaCount != null ? { mafiaCount: Number(body.mafiaCount) } : {};
+  const sel = body?.selection && typeof body.selection === 'object' ? (body.selection as Partial<ConfigSelection>) : null;
+  const selection: Partial<ConfigSelection> = sel
+    ? { ...sel, userOverrides: { ...(sel.userOverrides ?? {}), ...legacyMafia } }
+    : { userOverrides: { ...(body?.config && typeof body.config === 'object' ? body.config : {}), ...legacyMafia } };
+  const config: MafiaConfig = resolveConfig(selection);
   const turnDelayMs = config.turnDelayMs;
 
   // In play mode the human takes a real name from their profile; watch mode has no

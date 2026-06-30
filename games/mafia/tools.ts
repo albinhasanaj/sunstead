@@ -3,11 +3,11 @@ import type { AgentState, GameState, GameTool, PlayerId, ToolContext } from '../
 import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
 import { remember } from '../../lib/memory';
-import { resolveConfig, type MafiaConfig } from './config';
+import { normalizeConfig, type MafiaConfig } from './config';
 import { EMOTIONS, coerceEmotion, coerceIntensity } from '../../voice/emotion';
 
 // Resolved config off live state (spec §2). Role-rule gates below read from here.
-const cfg = (state: GameState): MafiaConfig => (state.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
+const cfg = (state: GameState): MafiaConfig => (state.meta.config as MafiaConfig | undefined) ?? normalizeConfig({});
 
 // ── the one PUBLIC expression signal, attached to every spoken action ───────────
 // emotion + intensity + (optional) who you're looking at. It rides the public speak

@@ -1,10 +1,10 @@
 import type { AgentState, GameState, PlayerId } from '../../engine/types';
 import { ROLE, isMafia } from './roles';
 import { PHASE } from './phases';
-import { resolveConfig, type Difficulty, type MafiaConfig } from './config';
+import { normalizeConfig, type Difficulty, type MafiaConfig } from './config';
 
 const nameOf = (s: GameState, id: PlayerId) => s.players.find((p) => p.id === id)?.name ?? id;
-const cfg = (s: GameState): MafiaConfig => (s.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
+const cfg = (s: GameState): MafiaConfig => (s.meta.config as MafiaConfig | undefined) ?? normalizeConfig({});
 
 // In-prompt transcript window: cap the visible public log to the most recent N
 // entries so older statements scroll OUT of context and can only be retrieved from
@@ -12,7 +12,7 @@ const cfg = (s: GameState): MafiaConfig => (s.meta.config as MafiaConfig | undef
 // config field (spec §2 contextWindow); 0 disables the cap. With no state, fall back
 // to the resolved default (which honors any env-seeded default in config.ts).
 export function contextWindow(state?: GameState): number {
-  return state ? cfg(state).contextWindow : resolveConfig({}).contextWindow;
+  return state ? cfg(state).contextWindow : normalizeConfig({}).contextWindow;
 }
 
 // The slice of the public log the agent is allowed to SEE this turn (the rest has

@@ -12,7 +12,7 @@ import { useVoiceQueue } from './useVoiceQueue';
 import { useAuth } from '../../_components/AuthProvider';
 import { PHASE_SECS, MAFIA_CHANCE_START, MAFIA_CHANCE_STEP, MAFIA_CHANCE_KEY } from './constants';
 import type { Announce, Feed, Player, Turn } from './types';
-import type { MafiaConfig } from '@/games/mafia/config';
+import { resolveConfig, type ConfigSelection } from '@/games/mafia/config';
 
 export function useMafiaGame() {
   const { profile, userId } = useAuth();
@@ -452,7 +452,7 @@ export function useMafiaGame() {
   }, [voteReveal, releaseHold]);
 
   const start = useCallback(
-    async (m: 'watch' | 'play', devRoleArg?: string, config?: Partial<MafiaConfig>) => {
+    async (m: 'watch' | 'play', devRoleArg?: string, selection?: ConfigSelection) => {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
@@ -506,9 +506,10 @@ export function useMafiaGame() {
       } catch {
         /* history unavailable — the id still drives the game, just not the URL */
       }
-      // Voice is a config toggle — default the mute state to it (server echoes the
-      // resolved value on the 'game' event, which we honor too).
-      setVoiceOn(config?.voiceEnabled !== false);
+      // Voice is a config toggle — default the mute state to the RESOLVED value (run the
+      // same resolveConfig the server will, so a preset/difficulty that turns voice off
+      // is reflected immediately; the server also echoes it on the 'game' event).
+      setVoiceOn(resolveConfig(selection ?? {}).voiceEnabled);
       voice.prime(); // we're in the Play/Watch click gesture — wake the audio context now
       voice.reset();
 
@@ -531,7 +532,7 @@ export function useMafiaGame() {
             ...(userId ? { userId } : {}),
             ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),
             ...(devRoleArg ? { devRole: devRoleArg } : {}),
-            ...(config ? { config } : {}),
+            ...(selection ? { selection } : {}),
             ...(m === 'play' ? { mafiaChance: mafiaChanceRef.current } : {}),
           }),
           signal: ac.signal,

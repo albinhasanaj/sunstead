@@ -9,6 +9,9 @@
 export type Difficulty = 'casual' | 'standard' | 'cunning';
 export type DayVoteTie = 'random' | 'no_lynch' | 'revote';
 export type NightKillTie = 'random' | 'no_kill';
+// Player-facing pacing tier (§2.5). Maps to raw turnDelay/paceMax ms via GAME_SPEED
+// so the lobby never shows milliseconds; the raw ms fields stay in Tier 3 (Advanced).
+export type GameSpeed = 'relaxed' | 'normal' | 'fast';
 
 export interface MafiaConfig {
   // — Table —
@@ -99,7 +102,7 @@ export function defaultMafiaCount(tableSize: number): number {
 }
 
 // The static (non-env) defaults. Role/mafia defaults that depend on tableSize are
-// filled in resolveConfig once the size is known.
+// filled in normalizeConfig once the size is known.
 const STATIC_DEFAULTS: Omit<MafiaConfig, 'tableSize' | 'mafiaCount' | 'enableDetective' | 'enableDoctor'> = {
   doctorSelfProtect: true,
   doctorRepeatProtect: false,
@@ -126,27 +129,96 @@ const STATIC_DEFAULTS: Omit<MafiaConfig, 'tableSize' | 'mafiaCount' | 'enableDet
   heroLinesPerRound: 1,
 };
 
+// ── Difficulty → engine knobs (§2.5) — the ONE table mapping a single player word
+// to the engine tunables it implies. The host picks "Casual / Standard / Cunning"
+// and resolveConfig sets these; the raw knobs live in Tier 3 (Advanced) only.
+// STANDARD intentionally re-asserts the STATIC_DEFAULTS values, so a Classic+Standard
+// game is byte-for-byte identical to the old flat default (§ acceptance #5).
+export const DIFFICULTY_ENGINE: Record<Difficulty, Partial<MafiaConfig>> = {
+  // small context window, one discussion round, no reactive auction, short memory.
+  casual: { contextWindow: 8, discussionRounds: 1, reactiveDiscussion: false, enableMemoryRecall: false },
+  // the baseline — equals the historical defaults so nothing changes by default.
+  standard: { contextWindow: 15, discussionRounds: 2, reactiveDiscussion: true, enableMemoryRecall: true },
+  // larger window, three rounds, full reactive + memory recall.
+  cunning: { contextWindow: 24, discussionRounds: 3, reactiveDiscussion: true, enableMemoryRecall: true },
+};
+
+// ── Game speed → pacing ms (§2.5) — translate "Relaxed / Normal / Fast" into the
+// raw turnDelay/paceMax fields so a player never sees milliseconds. NORMAL equals the
+// historical defaults (turnDelayMs 0, paceMaxMs 14000) for byte-for-byte parity.
+export const GAME_SPEED: Record<GameSpeed, Partial<MafiaConfig>> = {
+  relaxed: { turnDelayMs: 800, paceMaxMs: 18000 },
+  normal: { turnDelayMs: 0, paceMaxMs: 14000 },
+  fast: { turnDelayMs: 0, paceMaxMs: 9000 },
+};
+
 // ── Presets (§2.3) — named partial patches the lobby applies in one click ──────
-// Each preset only lists the fields it actually CHANGES from the defaults, so a
-// preset never quietly re-asserts a default value as if it were a setting.
+// A preset now carries (a) the difficulty + game-speed it implies (which in turn pick
+// the engine knobs above) and (b) PLAYER-FACING overrides only (table/roles/rules).
+// Engine knobs (discussion rounds, context window, reactive, memory, pacing) are NOT
+// duplicated here — they flow from difficulty/gameSpeed — so a preset never quietly
+// re-asserts an engine value as if it were a separate setting.
 export const PRESETS: Record<string, Partial<MafiaConfig>> = {
   classic: {},
-  casual: { revealRoleOnDeath: true, allowNoLynch: true, difficulty: 'casual', discussionRounds: 3 },
-  hardcore: { difficulty: 'cunning', firstNightKill: true },
-  chaos: { tableSize: 9, mafiaCount: 3, discussionRounds: 1 },
+  casual: { revealRoleOnDeath: true, allowNoLynch: true },
+  hardcore: { firstNightKill: true },
+  chaos: { tableSize: 9, mafiaCount: 3 },
   // A full 15-seat table (3 Mafia, Detective, Doctor, 10 Townspeople) — the model
   // battle royale, where every distinct lab takes a seat and we see who survives.
-  battle: { tableSize: 15, mafiaCount: 3, difficulty: 'cunning' },
+  battle: { tableSize: 15, mafiaCount: 3 },
 };
 export type PresetName = keyof typeof PRESETS;
 
-export const PRESET_META: { name: PresetName; label: string; blurb: string }[] = [
-  { name: 'classic', label: 'Classic', blurb: 'Balanced default' },
-  { name: 'casual', label: 'Casual', blurb: 'Forgiving, easy to read' },
-  { name: 'hardcore', label: 'Hardcore', blurb: 'Ruthless AIs, night-1 kill' },
-  { name: 'chaos', label: 'Chaos', blurb: 'Big & fast — 9 seats, 3 Mafia' },
-  { name: 'battle', label: 'Battle', blurb: '15 seats, every model' },
+export const PRESET_META: { name: PresetName; label: string; blurb: string; difficulty: Difficulty; gameSpeed: GameSpeed }[] = [
+  { name: 'classic', label: 'Classic', blurb: 'Balanced default', difficulty: 'standard', gameSpeed: 'normal' },
+  { name: 'casual', label: 'Casual', blurb: 'Forgiving, easy to read', difficulty: 'casual', gameSpeed: 'normal' },
+  { name: 'hardcore', label: 'Hardcore', blurb: 'Ruthless AIs, night-1 kill', difficulty: 'cunning', gameSpeed: 'normal' },
+  { name: 'chaos', label: 'Chaos', blurb: 'Big & fast — 9 seats, 3 Mafia', difficulty: 'standard', gameSpeed: 'fast' },
+  { name: 'battle', label: 'Battle', blurb: '15 seats, every model', difficulty: 'cunning', gameSpeed: 'normal' },
 ];
+
+// ── ConfigSelection — the tiered lobby state (§2.5). The UI edits THIS, not a flat
+// patch: a chosen preset, the one-word difficulty + game speed, and a SPARSE bag of
+// fields the host explicitly overrode. resolveConfig layers them into a MafiaConfig.
+export interface ConfigSelection {
+  preset: PresetName;
+  difficulty: Difficulty;
+  gameSpeed: GameSpeed;
+  userOverrides: Partial<MafiaConfig>; // only fields the host explicitly changed
+}
+
+export const DEFAULT_SELECTION: ConfigSelection = { preset: 'classic', difficulty: 'standard', gameSpeed: 'normal', userOverrides: {} };
+
+// The difficulty + game speed a preset starts from (used when the host picks a preset).
+export function presetDefaults(name: PresetName): { difficulty: Difficulty; gameSpeed: GameSpeed } {
+  const m = PRESET_META.find((p) => p.name === name);
+  return { difficulty: m?.difficulty ?? 'standard', gameSpeed: m?.gameSpeed ?? 'normal' };
+}
+
+// A fresh selection for a preset — its difficulty/speed defaults and NO user overrides.
+// Selecting a preset resets to these defaults (the lobby confirms before discarding edits).
+export function selectionForPreset(name: PresetName): ConfigSelection {
+  const d = presetDefaults(name);
+  return { preset: name, difficulty: d.difficulty, gameSpeed: d.gameSpeed, userOverrides: {} };
+}
+
+// Layer a tiered selection into a flat patch in resolution order (§2.5):
+//   preset defaults  ←  difficulty overrides  ←  gameSpeed overrides  ←  userOverrides
+// No clamping here — normalizeConfig does that. Kept separate so the UI can preview a
+// "baseline" (selection with empty overrides) to flag which fields were modified.
+export function layerSelection(sel: Partial<ConfigSelection> = {}): Partial<MafiaConfig> {
+  const preset: PresetName = sel.preset && PRESETS[sel.preset] ? sel.preset : 'classic';
+  const def = presetDefaults(preset);
+  const difficulty = sel.difficulty ?? def.difficulty;
+  const gameSpeed = sel.gameSpeed ?? def.gameSpeed;
+  return {
+    ...PRESETS[preset],
+    ...DIFFICULTY_ENGINE[difficulty],
+    difficulty, // the chosen word is itself a config field (selects the prompt variant)
+    ...GAME_SPEED[gameSpeed],
+    ...(sel.userOverrides ?? {}),
+  };
+}
 
 // Role composition derived from a resolved config — used by setup() to deal roles
 // and by the lobby's live readout. Specials are TOWN, so they never worsen parity.
@@ -165,10 +237,12 @@ export function roleComposition(c: Pick<MafiaConfig, 'tableSize' | 'mafiaCount' 
   return { mafia, detective, doctor, villager, total: c.tableSize };
 }
 
-// ── resolveConfig — the one place a config is fully defaulted, clamped, validated ─
+// ── normalizeConfig — the one place a config is fully defaulted, clamped, validated ─
 // Idempotent: passing an already-resolved config returns an equivalent one, so it's
-// safe to run in the API route (for validation + logging) AND again in setup().
-export function resolveConfig(input: Partial<MafiaConfig> = {}): MafiaConfig {
+// safe to run in the API route (for validation + logging) AND again in setup(). The
+// engine calls this directly (it already holds a flat config); the lobby + server go
+// through resolveConfig (below), which layers a tiered selection first.
+export function normalizeConfig(input: Partial<MafiaConfig> = {}): MafiaConfig {
   const seed = { ...STATIC_DEFAULTS, ...envDefaults() };
 
   // — Table size first; mafia/role defaults derive from it. —
@@ -227,6 +301,16 @@ export function resolveConfig(input: Partial<MafiaConfig> = {}): MafiaConfig {
     seed: typeof input.seed === 'string' && input.seed.trim() ? input.seed.trim() : newSeed(),
   };
   return out;
+}
+
+// ── resolveConfig — THE single resolution path shared by the lobby UI and the server
+// (§ acceptance #4). Layers a tiered selection (preset ← difficulty ← gameSpeed ←
+// userOverrides) and then defaults/clamps/validates it. The server re-runs this from
+// the client's selection rather than trusting any client-sent resolved config (§2.5).
+// resolveConfig({}) → Classic + Standard + Normal + no overrides = the historical
+// default, byte-for-byte (the seed aside, which is random either way).
+export function resolveConfig(selection: Partial<ConfigSelection> = {}): MafiaConfig {
+  return normalizeConfig(layerSelection(selection));
 }
 
 function newSeed(): string {

@@ -6,7 +6,7 @@ import { Eye, EyeOff, Users, ScrollText, LogOut, Timer, SkipForward, Gavel, Chec
 import TribunalScene from './TribunalScene';
 import { useMafiaGame } from './useMafiaGame';
 import { FLOAT_BTN, ROLE_STYLE } from './constants';
-import type { MafiaConfig, PresetName } from '@/games/mafia/config';
+import { DEFAULT_SELECTION, type ConfigSelection } from '@/games/mafia/config';
 import AnnouncementBanner from './_components/AnnouncementBanner';
 import DeathScreen from './_components/DeathScreen';
 import EndgameOverlay from './_components/EndgameOverlay';
@@ -30,10 +30,10 @@ export default function Home() {
   const [intro, setIntro] = useState<null | 'play' | 'watch'>(null);
   // Dev-only: force your role for testing (empty = random). Sent to the API.
   const [devRole, setDevRole] = useState('');
-  // Lobby config: a Partial<MafiaConfig> the settings panel edits, plus the chosen
-  // preset. The full config is resolved server-side; we send this patch to the API.
-  const [configPatch, setConfigPatch] = useState<Partial<MafiaConfig>>({});
-  const [preset, setPreset] = useState<PresetName>('classic');
+  // Lobby config: the tiered SELECTION the settings panel edits (preset + difficulty +
+  // gameSpeed + the sparse fields the host explicitly overrode). The full config is
+  // resolved by resolveConfig — here for preview, again server-side from this selection.
+  const [selection, setSelection] = useState<ConfigSelection>(DEFAULT_SELECTION);
   // Watch mode: reveal every agent's secret role (overhead tags + drawer badges).
   // Defaults on so spectators can see who the Mafia is; toggle off for a blind watch.
   const [revealRoles, setRevealRoles] = useState(true);
@@ -147,10 +147,10 @@ export default function Home() {
     setDevWinner(null);
     if (mode === 'watch') {
       setIntro('watch');
-      start('watch', undefined, configPatch);
+      start('watch', undefined, selection);
     } else {
       setIntro('play');
-      start('play', devRole, configPatch);
+      start('play', devRole, selection);
     }
   };
 
@@ -257,14 +257,16 @@ export default function Home() {
       </div>
 
       {/* role badge (play mode) — top-left, mirroring the floating controls */}
-      {mode === 'play' && me && (
+      {running && mode === 'play' && me && (
         <div className={`absolute left-3 top-3 z-30 rounded-lg border px-2.5 py-1.5 text-[10px] uppercase tracking-wider ${ROLE_STYLE[me.role] ?? 'border-neutral-700'}`}>
           you are {me.role}
         </div>
       )}
 
       {/* floating controls — top-right cluster. Leave-game is primary; the table
-          and transcript drawers sit beside it. Mute lives in the bottom voice dock. */}
+          and transcript drawers sit beside it. Mute lives in the bottom voice dock.
+          Gated on `running` so they only appear in an actual round, not the menu/lobby. */}
+      {running && (
       <div className="absolute right-3 top-3 z-50 flex items-center gap-2">
         {mode === 'watch' && (
           <button
@@ -293,6 +295,7 @@ export default function Home() {
           Leave game
         </button>
       </div>
+      )}
 
       {/* leave-game confirmation — a stray click shouldn't drop you out of a live round */}
       {confirmLeave && (
@@ -381,22 +384,20 @@ export default function Home() {
           winner={winner}
           devRole={devRole}
           setDevRole={setDevRole}
-          configPatch={configPatch}
-          setConfigPatch={setConfigPatch}
-          preset={preset}
-          setPreset={setPreset}
+          selection={selection}
+          setSelection={setSelection}
           mafiaChance={mafiaChance}
           onPlay={() => {
             setIntro('play');
             setEndStage(null);
             setDevWinner(null);
-            start('play', devRole, configPatch);
+            start('play', devRole, selection);
           }}
           onWatch={() => {
             setIntro('watch');
             setEndStage(null);
             setDevWinner(null);
-            start('watch', undefined, configPatch);
+            start('watch', undefined, selection);
           }}
         />
       )}

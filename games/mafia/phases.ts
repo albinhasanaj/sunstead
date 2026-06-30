@@ -1,7 +1,7 @@
 import type { AgentState, Emit, GameState, PlayerId } from '../../engine/types';
 import { ROLE, isMafia } from './roles';
 import { pollLiveUrge } from './liveUrge';
-import { resolveConfig, type MafiaConfig } from './config';
+import { normalizeConfig, type MafiaConfig } from './config';
 import { rngFloat, rngPick } from './rng';
 
 // Opt-in score breakdown for debugging the urge auction. Debug-only logging — it
@@ -9,7 +9,7 @@ import { rngFloat, rngPick } from './rng';
 const DEBUG_URGE = !!(typeof process !== 'undefined' && process.env?.MAFIA_DEBUG_URGE);
 
 // Resolved config off live state (spec §2). Every tunable below reads from here.
-const cfg = (state: GameState): MafiaConfig => (state.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
+const cfg = (state: GameState): MafiaConfig => (state.meta.config as MafiaConfig | undefined) ?? normalizeConfig({});
 
 export const PHASE = {
   NIGHT: 'NIGHT',

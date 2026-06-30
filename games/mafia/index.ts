@@ -5,14 +5,14 @@ import { PHASE, PHASES, turnOrder, advancePhase, nextSpeaker } from './phases';
 import { toolsFor } from './tools';
 import { winner } from './winCondition';
 import { systemPrompt, renderContext, visibleLog } from './prompts';
-import { resolveConfig, roleComposition, type MafiaConfig } from './config';
+import { normalizeConfig, roleComposition, type MafiaConfig } from './config';
 import { makeRng, shuffleWith } from './rng';
 
 function setup(playerNames: string[], options?: SetupOptions): GameState {
   // One resolved, validated config drives the whole game (spec §2). The host
   // (API route) usually resolves it already; re-resolving here is idempotent and
   // keeps headless callers (scripts/tests) working with sane defaults.
-  const config = resolveConfig((options?.config as Partial<MafiaConfig>) ?? {});
+  const config = normalizeConfig((options?.config as Partial<MafiaConfig>) ?? {});
 
   // Seed the single game RNG from the config seed BEFORE dealing roles, so the
   // shuffle is part of the deterministic stream (spec §10).
@@ -146,7 +146,7 @@ export const mafiaGame: GameDefinition = {
 
 // Resolved config off live state, with safe defaults if setup hasn't stamped it yet.
 function cfg(state: GameState): MafiaConfig {
-  return (state.meta.config as MafiaConfig | undefined) ?? resolveConfig({});
+  return (state.meta.config as MafiaConfig | undefined) ?? normalizeConfig({});
 }
 
 export default mafiaGame;
