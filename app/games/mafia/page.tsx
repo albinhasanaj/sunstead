@@ -19,6 +19,8 @@ import PlayersDrawer from './_components/PlayersDrawer';
 import SpeakerCaption from './_components/SpeakerCaption';
 import TranscriptDrawer from './_components/TranscriptDrawer';
 import VoiceDock from './_components/VoiceDock';
+import VoteSheet from './_components/VoteSheet';
+import VoteTally from './_components/VoteTally';
 
 export default function Home() {
   // Pure view toggles — these never touch the engine, so they live in the page.
@@ -45,7 +47,8 @@ export default function Home() {
   // night/dawn transition beat, without waiting for the engine. Stripped in production.
   const isDev = process.env.NODE_ENV !== 'production';
   const [devWinner, setDevWinner] = useState<string | null>(null);
-  const [devPulse, setDevPulse] = useState<{ dir: number; n: number } | null>(null);
+  // The face you've tentatively written on your vote slip (before confirming).
+  const [voteDraft, setVoteDraft] = useState<string | null>(null);
 
   // Everything that touches the engine — game state, audio pacing, phase timers,
   // and the derived view-model — lives in this one hook.
@@ -60,6 +63,9 @@ export default function Home() {
     winner,
     fate,
     humanVotes,
+    voteReveal,
+    committedVoters,
+    myConfirmedVote,
     running,
     mode,
     humanId,
@@ -81,7 +87,7 @@ export default function Home() {
     deathReady,
     spectating,
     spectate,
-    devSimulateEnd,
+    skipToVote,
     mafiaChance,
     me,
     myRole,
@@ -166,6 +172,51 @@ export default function Home() {
     : '';
   const targetChosen = !!pickTurn && !!selected && selected !== humanId;
 
+  // ── Vote flow: the paper-and-GUI vote (replaces click-a-face for the lynch) ──
+  const voteTurn = pickTurn && pickTurn.legal.includes('vote') ? pickTurn : null;
+  // The vote sheet + paper camera stay up for the WHOLE vote phase (you alive, not yet
+  // in the reveal) — so after you confirm you keep watching your slip while the others
+  // vote and check in. `voteTurn` (your actual turn) is what makes the sheet interactive.
+  const votingActive = running && !winner && phase?.phase === 'VOTE' && !!me?.alive && !spectating && !voteReveal;
+  const voteOptions: { id: string; name: string }[] = voteTurn ? voteTurn.voteTargets ?? voteTurn.alive ?? [] : [];
+  const voteTargetIds = new Set(voteOptions.map((p) => p.id));
+  // Every living seat, for the roster + checkmarks (your own row included).
+  const livingPlayers = players.filter((p) => p.alive).map((p) => ({ id: p.id, name: p.name }));
+  // Reset the draft when the whole vote phase ends, so a stale pick can't carry over.
+  useEffect(() => {
+    if (phase?.phase !== 'VOTE') setVoteDraft(null);
+  }, [phase?.phase]);
+  // ── Vote-reveal cutscene (drives the papers, the camera shot, and the tally) ──
+  // The slip the camera is currently on (and everyone before it) is INKED so the flip
+  // has something to reveal; the tally only counts FINISHED shots, so it ticks up as the
+  // camera moves on — a beat after you've read each slip.
+  const writtenVoters = voteReveal ? voteReveal.order.slice(0, voteReveal.step + 1) : [];
+  const talliedVoters = voteReveal ? voteReveal.order.slice(0, voteReveal.step) : [];
+  const revealPaperVotes = voteReveal
+    ? writtenVoters.reduce<Record<string, string>>((m, v) => ((m[v] = nameOf(voteReveal.votes[v])), m), {})
+    : undefined;
+  const revealFocusId = voteReveal ? voteReveal.order[Math.min(voteReveal.step, voteReveal.order.length - 1)] ?? null : null;
+  const tallyRows = (() => {
+    if (!voteReveal) return [];
+    const counts: Record<string, number> = {};
+    for (const v of talliedVoters) counts[voteReveal.votes[v]] = (counts[voteReveal.votes[v]] ?? 0) + 1;
+    const top = Math.max(0, ...Object.values(counts));
+    return Object.entries(counts)
+      .map(([id, count]) => ({ id, name: nameOf(id), count, leading: count === top && top > 0 }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
+  // The name on YOUR slip: your live draft while picking, your confirmed vote for the
+  // rest of the phase, or your revealed vote during the cutscene.
+  const myVote =
+    voteTurn && voteDraft
+      ? nameOf(voteDraft)
+      : voteReveal && humanId && writtenVoters.includes(humanId)
+      ? nameOf(voteReveal.votes[humanId])
+      : myConfirmedVote
+      ? nameOf(myConfirmedVote)
+      : null;
+
   return (
     <main className="fixed inset-0 bg-black text-neutral-100 font-mono">
       <audio ref={musicRef} hidden />
@@ -196,7 +247,10 @@ export default function Home() {
           speakerIntensity={speakerIntensity}
           lookingAtId={lookingAtId}
           gameOver={endWinner}
-          devPulse={devPulse}
+          myVote={myVote}
+          paperVotes={revealPaperVotes}
+          focusPaper={votingActive && (!!voteTurn || !!myConfirmedVote)}
+          revealFocusId={revealFocusId}
           onSelect={(id) => setSelected(id || null)}
           onAction={submitAction}
         />
@@ -322,7 +376,7 @@ export default function Home() {
       {/* full-screen menu — doubles as the entry and game-over screen. Held back
           while your death screen is up so a round that ended *with* your death shows
           the death screen first, not a jarring jump to the menu. */}
-      {!running && !eliminated && !endStage && (
+      {!running && !eliminated && !endStage && !voteReveal && (
         <MenuOverlay
           winner={winner}
           devRole={devRole}
@@ -420,39 +474,49 @@ export default function Home() {
         />
       )}
 
-      {/* night/vote target turns: no dock (you can't talk) — just a small hint to
-          click a face. It's swapped out for the confirm button once one is picked. */}
-      {running && !winner && pickTurn && !targetChosen && pickPrompt && (
+      {/* night target turns (kill/investigate/protect): no dock — just a hint to click a
+          face. Suppressed on the vote turn, which the VoteSheet below owns instead. */}
+      {running && !winner && pickTurn && !voteTurn && !targetChosen && pickPrompt && (
         <div className="pointer-events-none absolute bottom-11 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-full border border-neutral-700/60 bg-neutral-950/75 px-4 py-2 text-xs tracking-wide text-neutral-300 backdrop-blur">
           <Target className="h-3.5 w-3.5 text-neutral-400" />
           {pickPrompt}
         </div>
       )}
 
-      {/* dev-only cutscene triggers — replay the transitions / endgame reveal without
-          waiting on the engine. Only while a game is live (the scene needs seats).
-          Stripped from production builds via the isDev guard. */}
-      {isDev && running && !endWinner && (
+      {/* vote-reveal cutscene: the camera hops slip to slip while this tally climbs. */}
+      {voteReveal && <VoteTally rows={tallyRows} />}
+
+      {/* the vote roster: up for the whole phase. The camera frames your paper slip; you
+          click a name to write it on the slip, confirm to lock it in, then watch the
+          others check in (green ✓) while staying on your slip. */}
+      {votingActive && (
+        <VoteSheet
+          players={livingPlayers}
+          targetIds={voteTargetIds}
+          committed={committedVoters}
+          youId={humanId}
+          selected={voteDraft}
+          canVote={!!voteTurn}
+          confirmed={!!myConfirmedVote}
+          onPick={setVoteDraft}
+          onConfirm={() => {
+            if (voteDraft) submitAction('vote', { target: voteDraft });
+          }}
+        />
+      )}
+
+      {/* dev-only: force the discussion to end and jump straight to the vote, to test
+          the paper-voting flow without sitting through a full debate. Only while a
+          discussion is live; stripped from production via the isDev guard. */}
+      {isDev && running && !endWinner && phase?.phase === 'DISCUSSION' && (
         <div className="absolute bottom-3 left-3 z-50 flex flex-col gap-1">
-          <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-amber-400/60">dev · recap</span>
-          <div className="flex flex-wrap gap-1">
-            {[
-              // fill any hidden roles + seed votes first, so the reveal/recap is populated
-              // even in play mode (real games reveal roles via the win event).
-              { label: 'Recap: Town win', onClick: () => { devSimulateEnd(); setDevWinner('village'); } },
-              { label: 'Recap: Mafia win', onClick: () => { devSimulateEnd(); setDevWinner('mafia'); } },
-              { label: 'Night beat', onClick: () => setDevPulse((d) => ({ dir: -1, n: (d?.n ?? 0) + 1 })) },
-              { label: 'Dawn beat', onClick: () => setDevPulse((d) => ({ dir: 1, n: (d?.n ?? 0) + 1 })) },
-            ].map((b) => (
-              <button
-                key={b.label}
-                onClick={b.onClick}
-                className="rounded border border-neutral-700/70 bg-neutral-950/80 px-2 py-1 text-[10px] tracking-wide text-neutral-300 backdrop-blur transition hover:border-amber-400/50 hover:text-amber-100"
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
+          <span className="text-[9px] font-semibold uppercase tracking-[0.2em] text-amber-400/60">dev</span>
+          <button
+            onClick={skipToVote}
+            className="rounded border border-neutral-700/70 bg-neutral-950/80 px-2.5 py-1 text-[10px] tracking-wide text-neutral-300 backdrop-blur transition hover:border-amber-400/50 hover:text-amber-100"
+          >
+            Skip to vote
+          </button>
         </div>
       )}
 

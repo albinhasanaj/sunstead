@@ -45,8 +45,12 @@ export function nextSpeaker(state: GameState): PlayerId | null | Promise<PlayerI
     const aiCount = living.filter((p) => !p.private.human).length;
     meta.disc = { round: state.round, beat: 0, budget: aiCount * discussionRounds(state), spoke: {} as Record<PlayerId, number>, last: null as PlayerId | null };
     meta.humanWantsSkip = false; // fresh discussion → no pending skip request
+    meta.forceSkip = false; // and no pending dev force-skip
   }
   const d = meta.disc;
+
+  // Dev force-skip: jump straight to the vote, bypassing the consensus check below.
+  if (meta.forceSkip) return null;
 
   // Directed reply: the human addressed a specific agent (clicked them; the line was
   // prefixed with their name). Hand THAT agent the floor for the next beat — one

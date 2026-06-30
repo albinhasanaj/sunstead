@@ -25,6 +25,13 @@ export function useMafiaGame() {
   // face the human voted to lynch (for their personal vote-accuracy stat).
   const [fate, setFate] = useState<Record<string, 'killed' | 'lynched'>>({});
   const [humanVotes, setHumanVotes] = useState<string[]>([]);
+  // The vote-reveal cutscene: ordered voter ids, each one's target, and how many have
+  // been flipped so far. Null when not revealing. Drives the papers, camera and tally.
+  const [voteReveal, setVoteReveal] = useState<{ order: string[]; votes: Record<string, string>; step: number } | null>(null);
+  // Who has LOCKED IN a vote this round (ids only — never their choice), for the live
+  // checkmarks; and the human's own confirmed target (to keep their slip filled in).
+  const [committedVoters, setCommittedVoters] = useState<string[]>([]);
+  const [myConfirmedVote, setMyConfirmedVote] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [mode, setMode] = useState<'watch' | 'play'>('watch');
   const [gameId, setGameId] = useState<string | null>(null);
@@ -138,6 +145,45 @@ export function useMafiaGame() {
   gameIdRef.current = gameId;
   const nameOf = useCallback((id: string) => playersRef.current.find((p) => p.id === id)?.name ?? id, []);
 
+  // ── vote-reveal cutscene plumbing ──
+  // Votes arrive from the engine in one burst at tally, immediately followed by the
+  // elimination. We capture the burst, HOLD every event that follows (the lynch reveal,
+  // the next phase) and replay them only once the seat-by-seat reveal has finished — so
+  // the papers/tally tell the story before the body drops.
+  const voteBufRef = useRef<{ voter: string; target: string }[]>([]);
+  const holdRef = useRef(false); // buffering post-burst events?
+  const heldRef = useRef<any[]>([]); // events parked until the cutscene ends
+  const revealStartRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealSafetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleRef = useRef<((e: any) => void) | null>(null); // late-bound, to flush held events
+
+  // End the hold: stop buffering and replay the parked events in arrival order.
+  const releaseHold = useCallback(() => {
+    if (revealSafetyRef.current) { clearTimeout(revealSafetyRef.current); revealSafetyRef.current = null; }
+    holdRef.current = false;
+    setVoteReveal(null);
+    setCommittedVoters([]); // fresh checkmarks for any runoff that follows
+    setMyConfirmedVote(null);
+    const ev = heldRef.current;
+    heldRef.current = [];
+    for (const e of ev) handleRef.current?.(e);
+  }, []);
+
+  // The full burst has landed (fired from a setTimeout(0) after the synchronous flush):
+  // turn it into an ordered reveal the driver effect walks through.
+  const startVoteReveal = useCallback(() => {
+    revealStartRef.current = null;
+    const buf = voteBufRef.current;
+    voteBufRef.current = [];
+    if (!buf.length) { releaseHold(); return; }
+    const votes: Record<string, string> = {};
+    for (const v of buf) votes[v.voter] = v.target;
+    // Drop all the lines into the transcript up front; the cutscene paces the visuals.
+    setFeed((f) => [...f, ...buf.map((v) => ({ k: 'vote' as const, who: v.voter, target: v.target }))]);
+    setVoteReveal({ order: buf.map((v) => v.voter), votes, step: 0 });
+    revealSafetyRef.current = setTimeout(releaseHold, 45000); // never strand the game (≈4.5s/voter)
+  }, [releaseHold]);
+
   const postControl = useCallback((body: Record<string, unknown>) => {
     const id = gameIdRef.current;
     if (!id) return;
@@ -185,6 +231,12 @@ export function useMafiaGame() {
 
   const handle = useCallback(
     (e: any) => {
+      // While the vote-reveal cutscene is running, park everything that follows the vote
+      // burst (the elimination, the next phase) so it lands AFTER the reveal, not on top.
+      if (holdRef.current && e.type !== 'vote') {
+        heldRef.current.push(e);
+        return;
+      }
       switch (e.type) {
         case 'game':
           setGameId(e.gameId);
@@ -229,6 +281,8 @@ export function useMafiaGame() {
           setPhase({ phase: e.phase, round: e.round });
           setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
+          setCommittedVoters([]); // fresh slate of vote checkmarks each phase
+          setMyConfirmedVote(null);
           const night = e.phase === 'NIGHT';
           setNightWake(null); // reset the narrator each phase; 'wake' events drive it at night
           if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
@@ -319,11 +373,18 @@ export function useMafiaGame() {
           }
           break;
         case 'vote':
-          setFeed((f) => [...f, { k: 'vote', who: e.agent, target: e.target }]);
+          // Don't render the vote live — capture the burst and reveal it seat-by-seat.
+          // Engage the hold so the elimination that follows is deferred to the cutscene's
+          // end, and kick off the reveal once the whole synchronous burst has landed.
+          holdRef.current = true;
+          voteBufRef.current.push({ voter: e.agent, target: e.target });
+          if (!revealStartRef.current) revealStartRef.current = setTimeout(startVoteReveal, 0);
           break;
         case 'action':
           // A Mafia teammate's kill proposal (only reaches you when you're Mafia).
           if (e.kind === 'propose_kill' && e.target) setKillVotesByAgent((m) => ({ ...m, [e.agent]: e.target }));
+          // A vote commitment (target stripped server-side) → check this voter off.
+          if (e.kind === 'vote') setCommittedVoters((s) => (s.includes(e.agent) ? s : [...s, e.agent]));
           break;
         case 'knowledge':
           setFeed((f) => [...f, { k: 'knowledge', who: e.agent, text: e.text }]);
@@ -372,8 +433,23 @@ export function useMafiaGame() {
           break;
       }
     },
-    [nameOf, voice, playSfx, showAnnounce, ackVoiceDone, armDeathScreen],
+    [nameOf, voice, playSfx, showAnnounce, ackVoiceDone, armDeathScreen, startVoteReveal],
   );
+  handleRef.current = handle; // late binding so releaseHold can flush parked events
+
+  // Vote-reveal driver: flip one slip every beat (dropping its line into the feed), then
+  // hold on the final tally before releasing the elimination.
+  useEffect(() => {
+    if (!voteReveal) return;
+    const { order, step } = voteReveal;
+    if (step < order.length) {
+      // ~4.5s per voter: a front shot of them, the hold + 180° flip, then a beat to read.
+      const t = setTimeout(() => setVoteReveal((prev) => (prev ? { ...prev, step: prev.step + 1 } : prev)), 4500);
+      return () => clearTimeout(t);
+    }
+    const t = setTimeout(releaseHold, 1600); // linger on the full table, then the body drops
+    return () => clearTimeout(t);
+  }, [voteReveal, releaseHold]);
 
   const start = useCallback(
     async (m: 'watch' | 'play', devRoleArg?: string, config?: Partial<MafiaConfig>) => {
@@ -385,6 +461,15 @@ export function useMafiaGame() {
       setWinner(null);
       setFate({});
       setHumanVotes([]);
+      // tear down any in-flight vote-reveal cutscene
+      setVoteReveal(null);
+      setCommittedVoters([]);
+      setMyConfirmedVote(null);
+      voteBufRef.current = [];
+      heldRef.current = [];
+      holdRef.current = false;
+      if (revealStartRef.current) { clearTimeout(revealStartRef.current); revealStartRef.current = null; }
+      if (revealSafetyRef.current) { clearTimeout(revealSafetyRef.current); revealSafetyRef.current = null; }
       setPhase(null);
       setTurn(null);
       setSelected(null);
@@ -485,8 +570,13 @@ export function useMafiaGame() {
         setFeed((f) => [...f, { k: 'system', text: `🛡 You protected ${nameOf(args.target)} tonight.` }]);
       }
       if (tool === 'investigate') setFeed((f) => [...f, { k: 'system', text: `🔎 You investigated ${nameOf(args.target)}…` }]);
-      // Remember who you voted to lynch, for the endgame recap's vote-accuracy stat.
-      if (tool === 'vote' && args.target) setHumanVotes((v) => [...v, args.target]);
+      // Remember who you voted to lynch, for the endgame recap's vote-accuracy stat,
+      // and check yourself off / keep your slip filled in for the rest of the phase.
+      if (tool === 'vote' && args.target) {
+        setHumanVotes((v) => [...v, args.target]);
+        setMyConfirmedVote(args.target);
+        if (humanId) setCommittedVoters((s) => (s.includes(humanId) ? s : [...s, humanId]));
+      }
       // Show your own kill vote immediately (the engine echoes it back too).
       if (tool === 'mafia_propose_kill' && humanId && args.target) setKillVotesByAgent((m) => ({ ...m, [humanId]: args.target }));
       try {
@@ -531,6 +621,19 @@ export function useMafiaGame() {
     },
     [gameId],
   );
+
+  // Dev/testing: force the discussion to end and jump straight to the vote.
+  const skipToVote = useCallback(async () => {
+    try {
+      await fetch('/api/game/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gameId, control: 'forceVote' }),
+      });
+    } catch {
+      /* ignore */
+    }
+  }, [gameId]);
 
   // You chose to keep watching after dying: drop the death screen and switch to the
   // free spectator camera (same POV as watch-the-agents) for the rest of the round.
@@ -728,6 +831,9 @@ export function useMafiaGame() {
     winner,
     fate,
     humanVotes,
+    voteReveal,
+    committedVoters,
+    myConfirmedVote,
     running,
     mode,
     humanId,
@@ -752,6 +858,7 @@ export function useMafiaGame() {
     spectate,
     suicide,
     devSimulateEnd,
+    skipToVote,
     mafiaChance,
     // derived view-model
     me,

@@ -122,9 +122,13 @@ export async function POST(req: Request) {
         if (mode === 'play') {
           if (e.type === 'beliefs') return;
           if (e.type === 'whisper' && !humanIsMafia) return;
-          // Hide other players' night actions — except a human Mafia may see their
-          // teammates' kill proposals (propose_kill is a Mafia-only action).
-          if (e.type === 'action' && e.agent !== humanId && !(humanIsMafia && e.kind === 'propose_kill')) return;
+          // Other players' actions: a vote COMMITMENT is public (who voted, never their
+          // target) → strip the target and let it through so the UI can check them off.
+          // A human Mafia may see teammates' kill proposals; all else stays hidden.
+          if (e.type === 'action' && e.agent !== humanId) {
+            if (e.kind === 'vote') { send({ ...e, target: undefined }); return; }
+            if (!(humanIsMafia && e.kind === 'propose_kill')) return;
+          }
           if (e.type === 'knowledge' && e.agent !== humanId) return;
           // Wake narration leaks role composition over rounds (which specials are still
           // alive). Let the atmospheric 'mafia' wake through, and the human's OWN role,

@@ -19,6 +19,15 @@ export async function POST(req: Request) {
     return Response.json({ ok: true });
   }
 
+  // Dev/testing: force the discussion to end NOW and advance to the vote (bypasses the
+  // consensus skip). Abort any in-flight AI line so the jump lands promptly.
+  if (control === 'forceVote') {
+    if (session.state) (session.state.meta as Record<string, unknown>).forceSkip = true;
+    session.turnAbort?.abort();
+    session.wake?.();
+    return Response.json({ ok: true });
+  }
+
   // ── Real-time discussion controls (the human isn't a scheduled seat here) ──────
   // Interjection: a line the human said. The SSE loop injects it at the next beat
   // boundary so the AIs react to it — the human is always first priority.

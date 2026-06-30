@@ -15,7 +15,7 @@
 //    loop always sees current values without re-subscribing.
 
 import { useEffect, useRef } from 'react';
-import { Skull, Search, Shield, Gavel } from 'lucide-react';
+import { Skull, Search, Shield } from 'lucide-react';
 import * as THREE from 'three';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
@@ -65,6 +65,17 @@ export type Props = {
   // Dev-only: fire a night(-1)/dawn(+1) transition beat on each new `n` (so the page's
   // dev buttons can replay the punctuation without an actual phase change).
   devPulse?: { dir: number; n: number } | null;
+  // Vote papers: voterId → the name written on their slip. Used for the AI seats during
+  // the reveal. (The human seat is keyed off `s.human`, not its id — see myVote.)
+  paperVotes?: Record<string, string>;
+  // The name written on YOUR OWN slip, driven live as you pick in the GUI. Keyed by the
+  // human seat flag rather than an id lookup, which the human seat never exercises.
+  myVote?: string | null;
+  // True while it's YOUR vote turn → the camera drops to frame your paper for writing.
+  focusPaper?: boolean;
+  // During the vote-reveal cutscene, the seat whose slip is currently being shown → the
+  // camera flies top-down over that seat's paper, hopping from voter to voter.
+  revealFocusId?: string | null;
 };
 
 // ── brand palette ──────────────────────────────────────────────────────────────
@@ -506,6 +517,9 @@ type Seat = {
   tagMat: THREE.MeshBasicMaterial | null;
   tagKey: string;
   think: THREE.Mesh | null; // overhead "thinking…" bubble (shown while deliberating)
+  paper: THREE.Group | null; // vote card (written front + blank back) — flips to reveal
+  paperMat: THREE.MeshBasicMaterial | null; // the FRONT material (the written face)
+  paperKey: string; // last name written on the paper (so we only redraw on change)
   baseColor: THREE.Color;
   alive: boolean;
   deathAnim: number; // 0 = upright, 1 = fully collapsed
@@ -550,6 +564,50 @@ function viewTarget(phase: string, myRole: string, awake: boolean): ViewTarget {
 }
 
 const R = 4.2; // seating radius
+
+// ── vote papers ── a flat note lying on the table in front of each seat. These are the
+// placement knobs — the table top is a flat disc at y≈0.42 out to radius ~3.0, seats
+// sit at R=4.2, so the slip goes ON the table just in front of each seat.
+const PAPER_W = 0.92; // note width
+const PAPER_H = 0.62; // note height
+const PAPER_RADIUS = 2.75; // distance from the centre (on the table, in front of a seat)
+const PAPER_Y = 0.435; // a hair above the table top (0.42) so it doesn't z-fight
+
+// A parchment vote slip: "MY VOTE" header over a ruled line, with the chosen name inked
+// in below when set. Muted tone so the bloom pass (threshold 0.85) doesn't blow it out.
+function makePaperTexture(name: string | null) {
+  const w = 384;
+  const h = 256;
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext('2d')!;
+  ctx.fillStyle = '#cdbf99'; // aged parchment (kept below the bloom threshold)
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#a8966b';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(12, 12, w - 24, h - 24);
+  ctx.fillStyle = '#6c5d3a';
+  ctx.font = '700 30px ui-sans-serif, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('MY VOTE', w / 2, 64);
+  ctx.strokeStyle = '#9c8a60';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(48, h * 0.74);
+  ctx.lineTo(w - 48, h * 0.74);
+  ctx.stroke();
+  if (name) {
+    ctx.fillStyle = '#171008';
+    ctx.font = 'italic 700 72px "Segoe Script", "Bradley Hand", "Comic Sans MS", cursive';
+    ctx.fillText(name, w / 2, h * 0.62);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace; // canvas is sRGB — without this it renders washed-out white
+  tex.anisotropy = 4;
+  tex.needsUpdate = true;
+  return tex;
+}
 
 export default function TribunalScene(props: Props) {
   const mountRef = useRef<HTMLDivElement | null>(null);
@@ -779,7 +837,9 @@ export default function TribunalScene(props: Props) {
         if (s.grp) scene.remove(s.grp);
         if (s.label) scene.remove(s.label);
         if (s.ring) scene.remove(s.ring);
+        if (s.paper) scene.remove(s.paper);
         s.tagMat?.map?.dispose(); // dynamic tag textures aren't tracked in `owned`
+        s.paperMat?.map?.dispose(); // ditto for the dynamic written-name texture
       }
       clearBursts();
       for (const o of owned) o.dispose();
@@ -801,9 +861,28 @@ export default function TribunalScene(props: Props) {
         const color = colorFor(pl.name);
         const baseColor = new THREE.Color(color);
 
+        // vote CARD in front of this seat (built for everyone, incl. the human, who has
+        // no figure). A pivot group holds a written FRONT and a blank BACK so it can be
+        // held up and flipped 180° to reveal the vote. Added to the scene (not grp) so it
+        // never topples on death. At rest it lies flat on the table, written-side up.
+        const paperTex = makePaperTexture(null);
+        const paperMat = new THREE.MeshBasicMaterial({ map: paperTex }); // FRONT (written)
+        const paperBackMat = new THREE.MeshBasicMaterial({ color: 0xc6b78f }); // BACK (blank parchment)
+        const paperGeo = new THREE.PlaneGeometry(PAPER_W, PAPER_H);
+        const paperFront = new THREE.Mesh(paperGeo, paperMat);
+        const paperBack = new THREE.Mesh(paperGeo, paperBackMat);
+        paperBack.rotation.y = Math.PI; // faces the opposite way → it's the card's reverse
+        const paper = new THREE.Group();
+        paper.add(paperFront, paperBack);
+        paper.position.set(Math.cos(a) * PAPER_RADIUS, PAPER_Y, Math.sin(a) * PAPER_RADIUS);
+        paper.rotation.x = -Math.PI / 2; // lie flat, face up
+        paper.rotation.z = Math.atan2(Math.cos(a), Math.sin(a)); // text top points to centre → reads from the seat
+        scene.add(paper);
+        owned.push(paperTex, paperMat, paperBackMat, paperGeo);
+
         if (human) {
           // You ARE the camera — no figure, just a seat record so others look at you.
-          const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, body: null, armL: null, armR: null, foreL: null, foreR: null, head: null, skull: null, animPhase: 0, skinMat: null, bodyMat: null, accentMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+          const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: true, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp: null, body: null, armL: null, armR: null, foreL: null, foreR: null, head: null, skull: null, animPhase: 0, skinMat: null, bodyMat: null, accentMat: null, ring: null, label: null, tag: null, tagMat: null, tagKey: '', think: null, paper, paperMat, paperKey: '', baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
           seats.push(seat);
           seatById.set(pl.id, seat);
           return;
@@ -972,7 +1051,7 @@ export default function TribunalScene(props: Props) {
           thinkTex, thinkMat, thinkGeo,
         );
 
-        const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, body: bodyGrp, armL: arms[0], armR: arms[1], foreL: fores[0], foreR: fores[1], head, skull, animPhase: i * 1.7, skinMat, bodyMat, accentMat, ring, label, tag, tagMat, tagKey: '', think, baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
+        const seat: Seat = { id: pl.id, name: pl.name, role: pl.role, human: false, pos: new THREE.Vector3(x, 0, z), bodyYaw, grp, body: bodyGrp, armL: arms[0], armR: arms[1], foreL: fores[0], foreR: fores[1], head, skull, animPhase: i * 1.7, skinMat, bodyMat, accentMat, ring, label, tag, tagMat, tagKey: '', think, paper, paperMat, paperKey: '', baseColor, alive: pl.alive, deathAnim: pl.alive ? 0 : 1, deathInit: !pl.alive, fallAxis: null };
         // a figure built already-dead (e.g. reconnect) starts collapsed, no replay
         if (!pl.alive) {
           const outward = new THREE.Vector3(x, 0, z).normalize();
@@ -1148,6 +1227,17 @@ export default function TribunalScene(props: Props) {
     let prevPulseN = 0; // last dev-pulse nonce seen (so a button re-fires the beat)
     const cineAim = new THREE.Vector3(); // scratch: endgame orbit camera position
 
+    // ── vote-card reveal state ── per-shot clock + scratch for the hold/flip animation
+    let revealFocusPrev: string | null = null;
+    let revealFocusStartT = 0; // t when the current voter's shot began
+    const _cTable = new THREE.Vector3();
+    const _cHeld = new THREE.Vector3();
+    const _cDir = new THREE.Vector3();
+    const _cAim = new THREE.Object3D(); // scratch object: face-camera + flip → quaternion
+    const _cEuler = new THREE.Euler();
+    const _cQuat = new THREE.Quaternion();
+    const smooth01 = (x: number) => { const c = x < 0 ? 0 : x > 1 ? 1 : x; return c * c * (3 - 2 * c); };
+
     function animate() {
       raf = requestAnimationFrame(animate);
       t += 0.0015;
@@ -1155,6 +1245,8 @@ export default function TribunalScene(props: Props) {
       const isSpectator = p.myId == null;
       const awake = isSpectator || p.myRole === 'mafia' || !!p.turn;
       const v = viewTarget(p.phase, p.myRole, awake);
+
+      camera.up.set(0, 1, 0); // reset each frame; the paper-focus view overrides it below
 
       if (isSpectator) {
         // Watch mode: free orbit/zoom/pan around the table.
@@ -1167,8 +1259,10 @@ export default function TribunalScene(props: Props) {
         // subsequent watch game can orbit again — don't leave them stuck disabled).
         controls.enabled = !p.gameOver;
         if (controls.enabled) controls.update();
-      } else {
-        // Play mode: locked first-person from your seat; the mouse pans/tilts.
+      } else if (!p.gameOver && !p.focusPaper && !p.revealFocusId) {
+        // Play mode: locked first-person from your seat; the mouse pans/tilts. Skipped
+        // while a cinematic (endgame orbit / vote paper) owns the camera, so those don't
+        // get reset to the seat every frame and can actually move into position.
         if (controls.enabled) controls.enabled = false;
         controlsReady = false;
         const forwardAngle = Math.atan2(-eye.z, -eye.x);
@@ -1198,8 +1292,8 @@ export default function TribunalScene(props: Props) {
         transDir = p.devPulse.dir;
       }
       const transK = t < transUntil ? (transUntil - t) / 0.16 : 0; // 1 → 0 across the beat
-      // a soft bob on the first-person eye (skip during the endgame orbit below)
-      if (transK > 0 && !p.gameOver) camera.position.y += Math.sin(transK * Math.PI) * transDir * 0.1;
+      // a soft bob on the first-person eye (skip while a cinematic owns the camera)
+      if (transK > 0 && !p.gameOver && !p.focusPaper && !p.revealFocusId) camera.position.y += Math.sin(transK * Math.PI) * transDir * 0.1;
 
       // ── endgame reveal: lift the camera off your seat into a slow orbit of the whole
       // table while every role is unmasked overhead. Overrides the first-person lock and
@@ -1209,6 +1303,27 @@ export default function TribunalScene(props: Props) {
         cineAim.set(Math.cos(ang) * R * 1.95, 3.0, Math.sin(ang) * R * 1.95);
         camera.position.lerp(cineAim, 0.03); // ease in from wherever we were, then track
         camera.lookAt(0, 1.05, 0);
+      } else if (p.revealFocusId) {
+        // ── vote reveal ── a front shot of the focused voter (camera on the centre side,
+        // looking out at them) so we watch them hold the card up and flip it. ──
+        const fs = seatById.get(p.revealFocusId);
+        if (fs) {
+          const d = tmpFwd.set(fs.pos.x, 0, fs.pos.z).normalize();
+          cineAim.set(d.x * 1.7, 1.75, d.z * 1.7); // between centre and the player, eye height
+          camera.position.lerp(cineAim, 0.05);
+          camera.lookAt(fs.pos.x * 0.82, 1.5, fs.pos.z * 0.82); // their held card / upper body
+        }
+      } else if (p.focusPaper) {
+        // ── your vote ── top-down on YOUR slip while you fill it in. Screen-up toward the
+        // table centre so the handwriting reads upright (as from your seat). ──
+        const meSeat = seats.find((s) => s.human);
+        if (meSeat?.paper) {
+          const pp = meSeat.paper.position;
+          cineAim.set(pp.x, PAPER_Y + 1.05, pp.z);
+          camera.position.lerp(cineAim, 0.1);
+          camera.up.set(-pp.x, 0, -pp.z).normalize();
+          camera.lookAt(pp.x, PAPER_Y, pp.z);
+        }
       }
 
       // ease lights/fog/bloom/background toward the role-filtered target
@@ -1268,7 +1383,56 @@ export default function TribunalScene(props: Props) {
       const gest = EMOTION_GESTURE[speakerEmotion] ?? EMOTION_GESTURE.neutral;
       const lookId = p.lookingAtId ?? null;
 
+      // ── vote-card reveal: restart the per-shot clock whenever the focused voter changes
+      if ((p.revealFocusId ?? null) !== revealFocusPrev) {
+        revealFocusPrev = p.revealFocusId ?? null;
+        revealFocusStartT = t;
+      }
+      const revealElapsed = t - revealFocusStartT; // t-units (~0.09/sec)
+
       for (const s of seats) {
+        // ── vote card ── handled FIRST, before the no-figure skip, so the HUMAN seat
+        // (no body) still gets its slip. Its FRONT texture is redrawn only when the name
+        // changes; the pose below holds + flips it for the focused voter during the reveal.
+        if (s.paper) {
+          s.paper.visible = !hide;
+          const written = (s.human ? p.myVote : p.paperVotes?.[s.id]) ?? '';
+          if (written !== s.paperKey) {
+            s.paperKey = written;
+            s.paperMat?.map?.dispose();
+            if (s.paperMat) {
+              s.paperMat.map = makePaperTexture(written || null);
+              s.paperMat.needsUpdate = true;
+            }
+          }
+
+          // rest pose: flat on the table, written-side up, text toward the centre.
+          const ang = Math.atan2(s.pos.z, s.pos.x);
+          _cDir.set(s.pos.x, 0, s.pos.z).normalize();
+          _cTable.set(_cDir.x * PAPER_RADIUS, PAPER_Y, _cDir.z * PAPER_RADIUS);
+          const isFocus = !!p.revealFocusId && p.revealFocusId === s.id;
+          if (isFocus && revealElapsed > 0.085) {
+            // ── hold + flip ── after a ~1s establishing beat: raise the card off the table
+            // into a held pose facing the camera (showing its blank BACK), then flip 180°
+            // to reveal the written FRONT, then hold so the table can read it.
+            const raise = smooth01((revealElapsed - 0.085) / 0.11); // ~1s → ~2.2s
+            const flip = smooth01((revealElapsed - 0.205) / 0.085); // ~2.3s → ~3.2s
+            _cHeld.set(_cDir.x * (R - 0.95), 1.55, _cDir.z * (R - 0.95)); // up in front of the player
+            s.paper.position.lerp(_cTable.lerp(_cHeld, raise), 0.2);
+            // target orientation: face the camera, then add the (1-flip)·180° reveal turn
+            _cAim.position.copy(s.paper.position);
+            _cAim.up.set(0, 1, 0);
+            _cAim.lookAt(camera.position);
+            _cAim.rotateY(Math.PI * (1 - flip)); // PI = back to camera → 0 = written front
+            s.paper.quaternion.slerp(_cAim.quaternion, 0.16);
+          } else {
+            // ease back to the resting card on the table
+            s.paper.position.lerp(_cTable, 0.2);
+            _cQuat.setFromEuler(_cEuler.set(-Math.PI / 2, 0, Math.atan2(Math.cos(ang), Math.sin(ang))));
+            s.paper.quaternion.slerp(_cQuat, 0.2);
+          }
+        }
+
         if (!s.grp || !s.head || !s.ring || !s.label) continue; // human seat = no figure
         s.grp.visible = !hide;
         s.label.visible = !hide;
@@ -1552,6 +1716,7 @@ export default function TribunalScene(props: Props) {
             tm.opacity = 0.8 + Math.sin(t * 12) * 0.2;
           }
         }
+
       }
 
       // ── targeting reticle: snaps to whoever you hover during your pick turn ──
@@ -1765,7 +1930,8 @@ function ActionOverlay(props: Props) {
   if (legal.includes('mafia_propose_kill')) defs.push({ tool: 'mafia_propose_kill', label: `Kill ${selName}`, Icon: Skull, danger: true, targets: turn.killTargets ?? [] });
   if (legal.includes('investigate')) defs.push({ tool: 'investigate', label: `Investigate ${selName}`, Icon: Search, targets: turn.investigateTargets ?? [] });
   if (legal.includes('protect')) defs.push({ tool: 'protect', label: `Protect ${selName}`, Icon: Shield, targets: turn.protectTargets ?? [] });
-  if (legal.includes('vote')) defs.push({ tool: 'vote', label: `Vote out ${selName}`, Icon: Gavel, targets: turn.alive ?? [] });
+  // NB: 'vote' is intentionally NOT handled here — the paper-and-GUI VoteSheet (page) owns
+  // the vote turn, so this overlay only covers the night actions (kill/investigate/protect).
 
   // Only surface a button once a valid target is actually picked — there's no
   // empty/greyed "pick a target" state. Until then the bottom-center belongs to
