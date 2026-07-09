@@ -1,4 +1,4 @@
-import type { ZodTypeAny } from 'zod';
+import type { ZodTypeAny } from "zod";
 
 export type PlayerId = string;
 
@@ -66,7 +66,9 @@ export interface GameDefinition {
   beatPhases?: string[] | ((state: GameState) => string[]);
   // May be async: an optional paid "live urge" path polls each seat's own model
   // before picking. The free-tier path stays synchronous; the engine awaits either.
-  nextSpeaker?: (state: GameState) => PlayerId | null | Promise<PlayerId | null>;
+  nextSpeaker?: (
+    state: GameState,
+  ) => PlayerId | null | Promise<PlayerId | null>;
   // Phases whose turns are independent (e.g. secret simultaneous voting) and may
   // run concurrently instead of one at a time. May be a function of state (config-driven).
   parallelPhases?: string[] | ((state: GameState) => string[]);
@@ -83,7 +85,10 @@ export interface GameDefinition {
   renderContext?: (state: GameState, agent: AgentState) => string;
   // Optional async hook run before each AI turn: returns extra prompt text (e.g.
   // long-term memory recalled via pgvector) to append, or null. May perform I/O.
-  recallForTurn?: (state: GameState, agent: AgentState) => Promise<string | null>;
+  recallForTurn?: (
+    state: GameState,
+    agent: AgentState,
+  ) => Promise<string | null>;
   // The model string for agent decisions, routed via the AI Gateway.
   model?: string;
   // If a seat's own model fails (e.g. rate-limited), retry the turn once on this
@@ -92,39 +97,68 @@ export interface GameDefinition {
 }
 
 export type GameEvent =
-  | { type: 'setup'; players: { id: PlayerId; name: string; role: string; model?: string }[]; phase: string; round: number }
-  | { type: 'phase'; phase: string; round: number }
   | {
-      type: 'beliefs';
+      type: "setup";
+      players: { id: PlayerId; name: string; role: string; model?: string }[];
+      phase: string;
+      round: number;
+    }
+  | { type: "phase"; phase: string; round: number }
+  | {
+      type: "beliefs";
       agent: PlayerId;
       suspicions: Record<PlayerId, number>;
       reasoning: string;
       // On-deck "bid": how much this seat wants the floor + what it's holding. Only
       // ever reaches the client in watch mode (play mode drops 'beliefs' entirely).
-      bid?: { pressure: number; holding: string; triggers: string[]; round: number; beat: number };
+      bid?: {
+        pressure: number;
+        holding: string;
+        triggers: string[];
+        round: number;
+        beat: number;
+      };
     }
-  | { type: 'thinking'; agent: PlayerId; on: boolean } // seat is mid-deliberation — for a "thinking…" UI and to visualise concurrent thinking
+  | { type: "thinking"; agent: PlayerId; on: boolean } // seat is mid-deliberation — for a "thinking…" UI and to visualise concurrent thinking
   // The PUBLIC expression signal rides the spoken line (never the private beliefs
   // event): emotion + intensity drive voice delivery and body language; lookingAt is
   // a resolved player id the speaker is addressing. Engine treats them as opaque.
-  | { type: 'speak'; agent: PlayerId; text: string; audioUrl?: string; emotion?: string; intensity?: number; lookingAt?: PlayerId }
-  | { type: 'whisper'; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)
-  | { type: 'action'; agent: PlayerId; kind: string; target?: PlayerId }
-  | { type: 'knowledge'; agent: PlayerId; target: PlayerId; result: string; text: string } // private finding (e.g. Detective)
+  | {
+      type: "speak";
+      agent: PlayerId;
+      text: string;
+      audioUrl?: string;
+      emotion?: string;
+      intensity?: number;
+      lookingAt?: PlayerId;
+    }
+  | { type: "whisper"; agent: PlayerId; text: string; channel: string } // private channel (e.g. Mafia at night)
+  | { type: "action"; agent: PlayerId; kind: string; target?: PlayerId }
+  | {
+      type: "knowledge";
+      agent: PlayerId;
+      target: PlayerId;
+      result: string;
+      text: string;
+    } // private finding (e.g. Detective)
   // `role` is omitted on the wire in play mode for a hidden-role game (the host's
   // emit filter strips it unless config.revealRoleOnDeath or it's the human's own death).
-  | { type: 'death'; target: PlayerId; role?: string }
-  | { type: 'vote'; agent: PlayerId; target: PlayerId }
-  | { type: 'reveal'; target: PlayerId; role?: string }
+  | { type: "death"; target: PlayerId; role?: string }
+  | { type: "vote"; agent: PlayerId; target: PlayerId }
+  | { type: "reveal"; target: PlayerId; role?: string }
   // Anonymous night outcome when no one dies: 'saved' = the Mafia's target was
   // protected by the doctor; 'quiet' = no kill landed; 'night0' = the opening night,
   // which is a guaranteed no-kill BY THE RULES (config.firstNightKill off), not an
   // anomaly. Carries no ids — no one learns who was targeted or who saved them.
-  | { type: 'night'; outcome: 'saved' | 'quiet' | 'night0' }
+  | { type: "night"; outcome: "saved" | "quiet" | "night0" }
   // A night role is about to act now (anonymous — role only, never who). Lets the
   // UI narrate "the Detective wakes up" exactly when they actually do.
-  | { type: 'wake'; role: string }
+  | { type: "wake"; role: string }
   // Game over. The hidden game is decided, so every seat's true role is now public —
   // `roles` carries the full unmasking for the endgame reveal cutscene. (Safe to send
   // unfiltered: it fires exactly once, after the win condition is met.)
-  | { type: 'win'; winner: string; roles?: { id: PlayerId; role: string }[] };
+  | { type: "win"; winner: string; roles?: { id: PlayerId; role: string }[] }
+  // The loop could not make progress (hit its safety iteration bound, or an internal
+  // error left no winner). This is NOT a legitimate end — Mafia has no draw — so we
+  // surface it explicitly instead of faking a result, letting the UI offer recovery.
+  | { type: "stalled"; message: string };

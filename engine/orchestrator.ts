@@ -144,6 +144,18 @@ export async function runGame(
     return "aborted";
   }
 
+  // Stalled: the loop exited with no winner but wasn't aborted — it hit the safety
+  // iteration bound (or a dev force-stall). Mafia has no draw, so we DON'T fake one:
+  // surface a 'stalled' event and return the sentinel so the caller records it as an
+  // abnormal end and the UI can offer recovery (Bug #7 / Feature #8).
+  if (def.winner(state) === null) {
+    state.winner = "stalled";
+    const message = "The game stalled before reaching a result.";
+    console.warn(`[stall] ${message} (guard=${guard})`);
+    emit({ type: "stalled", message });
+    return "stalled";
+  }
+
   const winner = def.winner(state) ?? "draw";
   state.winner = winner;
   // Unmask every seat with the result — the game is over, so hidden roles become

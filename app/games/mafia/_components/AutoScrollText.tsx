@@ -1,10 +1,22 @@
-'use client';
+"use client";
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef } from "react";
 
 // Caption text that auto-scrolls through itself when a line is too long to fit the
 // fixed-height bar — pauses at the top, eases down to reveal the rest, then settles.
-export default function AutoScrollText({ text }: { text?: string }) {
+export type CaptionSize = "sm" | "md" | "lg";
+const BODY_CLASS: Record<CaptionSize, string> = {
+  sm: "max-h-[4rem] text-[13px]",
+  md: "max-h-[4.5rem] text-sm",
+  lg: "max-h-[5.5rem] text-base",
+};
+export default function AutoScrollText({
+  text,
+  size = "md",
+}: {
+  text?: string;
+  size?: CaptionSize;
+}) {
   const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = ref.current;
@@ -33,7 +45,10 @@ export default function AutoScrollText({ text }: { text?: string }) {
     };
   }, [text]);
   return (
-    <div ref={ref} className="max-h-[4.5rem] overflow-hidden text-sm leading-snug text-neutral-100">
+    <div
+      ref={ref}
+      className={`overflow-hidden leading-snug text-neutral-100 ${BODY_CLASS[size]}`}
+    >
       {text}
     </div>
   );

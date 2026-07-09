@@ -289,7 +289,7 @@ export async function POST(req: Request) {
       // The filter is the WIRE-level guard (spec §9): hidden facts must not reach the
       // client at all, not merely go unrendered.
       const emit = (e: GameEvent) => {
-        if (mode === "play") {
+        if (mode === "play" && !session.spectator) {
           if (e.type === "beliefs") return;
           if (e.type === "whisper" && !humanIsMafia) return;
           // Other players' actions: a vote COMMITMENT is public (who voted, never their
@@ -338,38 +338,44 @@ export async function POST(req: Request) {
 
       // Run a human's interjected line as their own seat's tool, so it lands in the
       // transcript + long-term memory like any spoken line, and mark them as the last
-      // speaker so the next AI reacts to them and no one repeats.
+      // speaker so the next AI reacts to them and no one repeats. Drains the WHOLE
+      // queue in order so several quick messages all land (Bug #5).
       async function injectPendingSay(state: GameState): Promise<void> {
-        const say = session.pendingSay;
-        if (!say) return;
-        session.pendingSay = null;
+        const q = session.sayQueue;
+        if (!q || q.length === 0) return;
         const human = state.players.find((p) => p.private.human && p.alive);
-        if (!human) return;
-        const tool = mafiaGame
-          .toolsFor(state, human)
-          .find((t) => t.name === say.tool && t.legalIn(state, human));
-        if (!tool) return;
-        try {
-          await tool.execute(say.args ?? {}, { state, agent: human, emit });
-          const disc = state.meta.disc as
-            | { last?: string; directTo?: string | null }
-            | undefined;
-          if (disc) {
-            disc.last = human.id;
-            // If the line was directed at a specific living AI, hand them the floor
-            // for the next beat so a direct question gets a direct answer.
-            const target = say.to
-              ? state.players.find(
-                  (p) => p.id === say.to && p.alive && !p.private.human,
-                )
-              : null;
-            disc.directTo = target ? target.id : null;
+        if (!human) {
+          session.sayQueue = [];
+          return;
+        }
+        while (q.length) {
+          const say = q.shift()!;
+          const tool = mafiaGame
+            .toolsFor(state, human)
+            .find((t) => t.name === say.tool && t.legalIn(state, human));
+          if (!tool) continue;
+          try {
+            await tool.execute(say.args ?? {}, { state, agent: human, emit });
+            const disc = state.meta.disc as
+              | { last?: string; directTo?: string | null }
+              | undefined;
+            if (disc) {
+              disc.last = human.id;
+              // If the line was directed at a specific living AI, hand them the floor
+              // for the next beat so a direct question gets a direct answer.
+              const target = say.to
+                ? state.players.find(
+                    (p) => p.id === say.to && p.alive && !p.private.human,
+                  )
+                : null;
+              disc.directTo = target ? target.id : null;
+            }
+          } catch (err) {
+            console.error(
+              "[say] human interjection failed:",
+              (err as Error).message,
+            );
           }
-        } catch (err) {
-          console.error(
-            "[say] human interjection failed:",
-            (err as Error).message,
-          );
         }
       }
 
@@ -385,7 +391,7 @@ export async function POST(req: Request) {
         for (;;) {
           if (
             session.closed ||
-            session.pendingSay ||
+            (session.sayQueue?.length ?? 0) > 0 ||
             session.abort?.signal.aborted
           )
             break; // human cut in / game aborted → stop pacing
@@ -503,8 +509,12 @@ export async function POST(req: Request) {
       } catch (err) {
         send({ type: "error", message: (err as Error).message });
       } finally {
-        // Close the game row: a real winner → finished; 'aborted'/null → aborted.
-        const finalWinner = winner && winner !== "aborted" ? winner : null;
+        // Close the game row: a real winner → finished; 'aborted'/'stalled'/null →
+        // aborted (an abnormal end, not a legitimate result).
+        const finalWinner =
+          winner && winner !== "aborted" && winner !== "stalled"
+            ? winner
+            : null;
         void finishGame(gameId, finalWinner);
         session.closed = true;
         if (session.graceTimer) {

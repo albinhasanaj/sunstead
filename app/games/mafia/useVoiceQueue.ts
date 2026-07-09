@@ -1,11 +1,19 @@
-'use client';
+"use client";
 
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from "react";
 
 // A line to voice. emotion/intensity drive ElevenLabs delivery (sent to /api/tts);
 // lookingAt rides along so the scene can aim the speaker's gaze when this line plays.
 // hero = a rare decisive line the client gated for the richer v3 model (Stage 5).
-export type VoiceItem = { id: string; name: string; text: string; emotion?: string; intensity?: number; lookingAt?: string; hero?: boolean };
+export type VoiceItem = {
+  id: string;
+  name: string;
+  text: string;
+  emotion?: string;
+  intensity?: number;
+  lookingAt?: string;
+  hero?: boolean;
+};
 
 // Drives the spoken lines as audio, one at a time and in order, so voices never
 // overlap. TTS is fetched on demand from /api/tts. Critically, it also reports its
@@ -25,7 +33,11 @@ const MIN_HOLD_MS = 900;
 
 // A cheap procedural reverb impulse: exponentially-decaying stereo noise. Gives the
 // table a small-room tail so distant voices read as "across the room", not studio-dry.
-function makeImpulse(ctx: AudioContext, seconds: number, decay: number): AudioBuffer {
+function makeImpulse(
+  ctx: AudioContext,
+  seconds: number,
+  decay: number,
+): AudioBuffer {
   const rate = ctx.sampleRate;
   const len = Math.max(1, Math.floor(rate * seconds));
   const buf = ctx.createBuffer(2, len, rate);
@@ -66,7 +78,9 @@ export function useVoiceQueue() {
   const lowpassRef = useRef<BiquadFilterNode | null>(null);
   const wetRef = useRef<GainNode | null>(null);
   // A MediaElementSource can be created ONCE per element, so we cache it per <audio>.
-  const sourceFor = useRef<WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>>(new WeakMap());
+  const sourceFor = useRef<
+    WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>
+  >(new WeakMap());
 
   // Lazily build the shared graph:
   //   source → panner → lowpass → analyser → destination          (dry, positioned)
@@ -74,7 +88,10 @@ export function useVoiceQueue() {
   const getCtx = useCallback((): AudioContext | null => {
     if (audioCtxRef.current) return audioCtxRef.current;
     try {
-      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const Ctx =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
       if (!Ctx) return null;
       const ctx = new Ctx();
       const analyser = ctx.createAnalyser();
@@ -86,8 +103,8 @@ export function useVoiceQueue() {
       // HRTF panner → true left/right binaural placement, with a real (inverse) distance
       // falloff so someone across the table is audibly farther than your neighbour.
       const panner = ctx.createPanner();
-      panner.panningModel = 'HRTF';
-      panner.distanceModel = 'inverse';
+      panner.panningModel = "HRTF";
+      panner.distanceModel = "inverse";
       panner.refDistance = 4;
       panner.maxDistance = 40;
       panner.rolloffFactor = 1.1;
@@ -95,24 +112,24 @@ export function useVoiceQueue() {
       // De-bass: a highpass to kill sub-100Hz rumble/boom, plus a low-shelf cut so male
       // voices aren't muddy. Static tone correction (not distance-modulated).
       const highpass = ctx.createBiquadFilter();
-      highpass.type = 'highpass';
+      highpass.type = "highpass";
       highpass.frequency.value = 150; // roll off everything below the voice's body
       highpass.Q.value = 0.6;
       const lowshelf = ctx.createBiquadFilter();
-      lowshelf.type = 'lowshelf';
+      lowshelf.type = "lowshelf";
       lowshelf.frequency.value = 320; // shelve down the low-mids that read as "bassy"
       lowshelf.gain.value = -6; // dB
 
       // Distance lowpass (the scene modulates .frequency): full-band up close, muffled far.
       const lowpass = ctx.createBiquadFilter();
-      lowpass.type = 'lowpass';
+      lowpass.type = "lowpass";
       lowpass.frequency.value = 18000;
       lowpass.Q.value = 0.7;
 
       // Gentle presence shelf so voices stay clear/forward under the distance lowpass
       // (a standard vocal trick — lift "intelligibility" without adding sibilant fizz).
       const presence = ctx.createBiquadFilter();
-      presence.type = 'highshelf';
+      presence.type = "highshelf";
       presence.frequency.value = 3500;
       presence.gain.value = 2.5; // dB
 
@@ -134,7 +151,7 @@ export function useVoiceQueue() {
       const convolver = ctx.createConvolver();
       convolver.buffer = makeImpulse(ctx, 1.4, 2.4);
       const reverbDamp = ctx.createBiquadFilter();
-      reverbDamp.type = 'lowpass';
+      reverbDamp.type = "lowpass";
       reverbDamp.frequency.value = 6500; // dark, natural tail
       const wet = ctx.createGain();
       wet.gain.value = 0.05; // scene modulates by distance — kept low (subtle room, not a hall)
@@ -197,7 +214,12 @@ export function useVoiceQueue() {
 
   // Hand the scene the live spatial nodes so it can pose the listener (camera) and the
   // panner (speaker's seat) and modulate distance air (lowpass + reverb) each frame.
-  const getSpatial = useCallback((): { panner: PannerNode; listener: AudioListener; lowpass: BiquadFilterNode; wet: GainNode } | null => {
+  const getSpatial = useCallback((): {
+    panner: PannerNode;
+    listener: AudioListener;
+    lowpass: BiquadFilterNode;
+    wet: GainNode;
+  } | null => {
     const ctx = audioCtxRef.current;
     const panner = pannerRef.current;
     const lowpass = lowpassRef.current;
@@ -211,7 +233,7 @@ export function useVoiceQueue() {
   // it would mute playback — so we only hijack the element's output once it's running.
   const prime = useCallback(() => {
     const ctx = getCtx();
-    if (ctx && ctx.state !== 'running') void ctx.resume();
+    if (ctx && ctx.state !== "running") void ctx.resume();
   }, [getCtx]);
 
   const ensureGraph = useCallback(
@@ -222,7 +244,7 @@ export function useVoiceQueue() {
         if (!ctx || !analyser) return;
         // While suspended, DON'T route the element through the graph — that would mute
         // it. Let it play normally (no analysis this line) and nudge the context awake.
-        if (ctx.state !== 'running') {
+        if (ctx.state !== "running") {
           void ctx.resume();
           return;
         }
@@ -273,14 +295,24 @@ export function useVoiceQueue() {
     const startedAt = Date.now();
     listeners.current.onStart?.(item); // caption + speaking head follow THIS line
     try {
-      const res = await fetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         // emotion/intensity → per-line voiceSettings (Stage 1). Absent → neutral default.
         // hero (gated by the caller) → the richer v3 model + an audio tag (Stage 5).
-        body: JSON.stringify({ agent: item.name, text: item.text, emotion: item.emotion, intensity: item.intensity, hero: item.hero }),
+        body: JSON.stringify({
+          agent: item.name,
+          text: item.text,
+          emotion: item.emotion,
+          intensity: item.intensity,
+          hero: item.hero,
+        }),
       });
-      if (enabled.current && res.ok && res.headers.get('content-type')?.includes('audio')) {
+      if (
+        enabled.current &&
+        res.ok &&
+        res.headers.get("content-type")?.includes("audio")
+      ) {
         const url = URL.createObjectURL(await res.blob());
         const audio = new Audio(url);
         audioRef.current = audio;
@@ -300,7 +332,8 @@ export function useVoiceQueue() {
     // Hold the line on screen for a readable minimum even if its audio was short,
     // failed, or muted — so the presentation never out-runs comprehension.
     const elapsed = Date.now() - startedAt;
-    if (elapsed < MIN_HOLD_MS) await new Promise((r) => setTimeout(r, MIN_HOLD_MS - elapsed));
+    if (elapsed < MIN_HOLD_MS)
+      await new Promise((r) => setTimeout(r, MIN_HOLD_MS - elapsed));
     listeners.current.onEnd?.(item);
     playing.current = false;
     if (queue.current.length) void pump();
@@ -321,7 +354,8 @@ export function useVoiceQueue() {
     (on: boolean) => {
       enabled.current = on;
       if (!on) {
-        if (queue.current.length) listeners.current.onFlush?.(queue.current.slice()); // don't lose un-voiced lines from the transcript
+        if (queue.current.length)
+          listeners.current.onFlush?.(queue.current.slice()); // don't lose un-voiced lines from the transcript
         queue.current = [];
         audioRef.current?.pause();
         finishRef.current?.(); // unblock any in-flight line so the pump can drain
@@ -332,7 +366,8 @@ export function useVoiceQueue() {
   );
 
   const reset = useCallback(() => {
-    if (queue.current.length) listeners.current.onFlush?.(queue.current.slice()); // keep un-voiced lines in the transcript
+    if (queue.current.length)
+      listeners.current.onFlush?.(queue.current.slice()); // keep un-voiced lines in the transcript
     queue.current = [];
     audioRef.current?.pause();
     finishRef.current?.();
@@ -345,6 +380,34 @@ export function useVoiceQueue() {
     listeners.current = l;
   }, []);
 
+  // Fully tear down the Web Audio graph when the game screen unmounts, so leaving and
+  // re-entering games doesn't accumulate live AudioContexts (Bug #15). reset() stops
+  // playback; this also closes the context and drops the cached nodes/sources.
+  const dispose = useCallback(() => {
+    reset();
+    const ctx = audioCtxRef.current;
+    audioCtxRef.current = null;
+    analyserRef.current = null;
+    pannerRef.current = null;
+    lowpassRef.current = null;
+    wetRef.current = null;
+    dataRef.current = null;
+    sourceFor.current = new WeakMap();
+    if (ctx && ctx.state !== "closed") void ctx.close().catch(() => {});
+  }, [reset]);
+
   // Stable object so consumers' useCallback deps don't churn every render.
-  return useMemo(() => ({ enqueue, setEnabled, reset, bind, getLevel, prime, getSpatial }), [enqueue, setEnabled, reset, bind, getLevel, prime, getSpatial]);
+  return useMemo(
+    () => ({
+      enqueue,
+      setEnabled,
+      reset,
+      dispose,
+      bind,
+      getLevel,
+      prime,
+      getSpatial,
+    }),
+    [enqueue, setEnabled, reset, dispose, bind, getLevel, prime, getSpatial],
+  );
 }

@@ -19,6 +19,14 @@ import {
 import type { Announce, Feed, Player, Turn } from "./types";
 import { resolveConfig, type ConfigSelection } from "@/games/mafia/config";
 
+// Vote-reveal cutscene timing. One slip flips every STEP ms (a front shot, the 180°
+// flip, then a beat to read); the sequence lingers TAIL ms on the full tally before
+// the body drops. The safety net that force-ends the reveal is sized from THESE so it
+// scales with the number of voters instead of a fixed cap that cut big tables short
+// (Bug #9).
+const VOTE_REVEAL_STEP_MS = 4500;
+const VOTE_REVEAL_TAIL_MS = 1600;
+
 export function useMafiaGame() {
   const { profile, userId } = useAuth();
   const [players, setPlayers] = useState<Player[]>([]);
@@ -105,6 +113,10 @@ export function useMafiaGame() {
   // spectator vantage (same POV as watch-the-agents) for the rest of the round.
   const [spectating, setSpectating] = useState(false);
   const deathTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The game couldn't reach a result (hit its safety bound / internal error): holds the
+  // stall message so the screen can show a "Game Stalled" recovery card instead of a
+  // fake draw (Bug #7 / Feature #8). Null while the game is progressing normally.
+  const [stalled, setStalled] = useState<string | null>(null);
   // Personal "pity" odds of drawing Mafia (play mode). Persisted per-browser: it
   // climbs each game you're not Mafia and resets the game you are. We keep a ref in
   // lockstep so `start` can read the live value without re-creating the callback.
@@ -124,6 +136,8 @@ export function useMafiaGame() {
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const soundOnRef = useRef(true);
+  // Sound effects currently playing, so playSfx can cap concurrency + duck them (Bug #16).
+  const sfxActiveRef = useRef<HTMLAudioElement[]>([]);
   // True while we're replaying a game's history to catch a reconnecting client up
   // (Sweep 1). During replay we rebuild state silently — no audio, no transient
   // banners, no vote cutscene — so a resume doesn't flood the room with stale beats.
@@ -132,9 +146,44 @@ export function useMafiaGame() {
   const playSfx = useCallback((cue: string) => {
     if (!soundOnRef.current || replayingRef.current) return;
     try {
+      const active = sfxActiveRef.current;
+      // Cap simultaneous effects so a busy moment can't pile into a wall of noise —
+      // drop the oldest still-playing cue to make room (Bug #16).
+      const MAX_SFX = 3;
+      while (active.length >= MAX_SFX) {
+        const old = active.shift();
+        try {
+          old?.pause();
+        } catch {
+          /* ignore */
+        }
+      }
+      // Duck whatever's already playing so the new cue reads clearly over the top.
+      for (const other of active)
+        other.volume = Math.max(0.12, other.volume * 0.5);
+
       const a = new Audio(`/api/sfx?cue=${cue}`);
-      a.volume = 0.5;
-      void a.play().catch(() => {});
+      const target = 0.5;
+      a.volume = 0.0001; // start silent → fade in so cues don't click on
+      active.push(a);
+      const cleanup = () => {
+        const i = active.indexOf(a);
+        if (i >= 0) active.splice(i, 1);
+      };
+      a.addEventListener("ended", cleanup, { once: true });
+      a.addEventListener("error", cleanup, { once: true });
+      void a
+        .play()
+        .then(() => {
+          const t0 = performance.now();
+          const fade = () => {
+            const k = Math.min(1, (performance.now() - t0) / 120);
+            a.volume = target * k;
+            if (k < 1 && !a.paused) requestAnimationFrame(fade);
+          };
+          requestAnimationFrame(fade);
+        })
+        .catch(cleanup);
     } catch {
       /* ignore */
     }
@@ -238,7 +287,12 @@ export function useMafiaGame() {
       })),
     ]);
     setVoteReveal({ order: buf.map((v) => v.voter), votes, step: 0 });
-    revealSafetyRef.current = setTimeout(releaseHold, 45000); // never strand the game (≈4.5s/voter)
+    // Safety net so a stuck cutscene never strands the game — sized to the ACTUAL
+    // number of voters plus slack (Bug #9). A fixed 45s used to fire mid-sequence at
+    // larger tables, hiding the later slips.
+    const safetyMs =
+      buf.length * VOTE_REVEAL_STEP_MS + VOTE_REVEAL_TAIL_MS + 6000;
+    revealSafetyRef.current = setTimeout(releaseHold, safetyMs);
   }, [releaseHold]);
 
   const postControl = useCallback((body: Record<string, unknown>) => {
@@ -658,6 +712,23 @@ export function useMafiaGame() {
         case "done":
           setTurn(null);
           break;
+        case "stalled":
+          // The loop couldn't reach a result. Surface a recovery card (not a fake draw):
+          // drop any pending turn and stop the music. Ignored during history replay.
+          if (replayingRef.current) break;
+          setTurn(null);
+          setStalled(
+            typeof e.message === "string" && e.message
+              ? e.message
+              : "The game stalled before reaching a result.",
+          );
+          voice.reset();
+          musicRef.current?.pause();
+          setFeed((f) => [
+            ...f,
+            { k: "error", text: `⚠ ${e.message ?? "Game stalled."}` },
+          ]);
+          break;
         case "resume":
           // A reconnect: the server is about to replay the whole game so far. Rebuild
           // silently — clear any in-flight cutscene so replayed events don't collide.
@@ -708,11 +779,11 @@ export function useMafiaGame() {
           setVoteReveal((prev) =>
             prev ? { ...prev, step: prev.step + 1 } : prev,
           ),
-        4500,
+        VOTE_REVEAL_STEP_MS,
       );
       return () => clearTimeout(t);
     }
-    const t = setTimeout(releaseHold, 1600); // linger on the full table, then the body drops
+    const t = setTimeout(releaseHold, VOTE_REVEAL_TAIL_MS); // linger on the full table, then the body drops
     return () => clearTimeout(t);
   }, [voteReveal, releaseHold]);
 
@@ -759,6 +830,7 @@ export function useMafiaGame() {
     setEliminated(null);
     setDeathReady(false);
     setSpectating(false);
+    setStalled(null);
     if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
     announcedTeamRef.current = false;
   }, []);
@@ -858,7 +930,10 @@ export function useMafiaGame() {
             { k: "error", text: err?.message ?? "stream failed" },
           ]);
       } finally {
-        setRunning(false);
+        // Only tear down if WE are still the current stream. A superseded run (a new
+        // game started, which aborted us) must not flip the fresh game back to the
+        // menu when its own stream finally unwinds (Bug #8).
+        if (abortRef.current === ac) setRunning(false);
       }
     },
     [pumpStream, resetGameState, voice, profile, userId],
@@ -909,8 +984,11 @@ export function useMafiaGame() {
             { k: "error", text: err?.message ?? "reconnect failed" },
           ]);
       } finally {
-        replayingRef.current = false;
-        setRunning(false);
+        // Same guard as start(): a superseded reconnect must not reset a newer run (Bug #8).
+        if (abortRef.current === ac) {
+          replayingRef.current = false;
+          setRunning(false);
+        }
       }
     },
     [pumpStream, resetGameState, voice, userId],
@@ -982,6 +1060,20 @@ export function useMafiaGame() {
     [gameId, nameOf, humanId],
   );
 
+  // Feature #2: change your lynch vote before the phase closes. Your vote turn already
+  // ended, so this doesn't go through submitAction — it posts a `changeVote` control the
+  // server applies to the live tally, and we update your slip locally. Replaces (not
+  // appends) this round's recorded vote so the recap's accuracy stat stays honest.
+  const changeVote = useCallback(
+    (target: string) => {
+      if (!target) return;
+      setMyConfirmedVote(target);
+      setHumanVotes((v) => (v.length ? [...v.slice(0, -1), target] : [target]));
+      postControl({ control: "changeVote", to: target });
+    },
+    [postControl],
+  );
+
   // Pass / skip the current turn (the engine treats a null choice as no action).
   const skipTurn = useCallback(async () => {
     setTurn(null);
@@ -1025,15 +1117,30 @@ export function useMafiaGame() {
     }
   }, [gameId]);
 
+  // Leave a stalled game: abort the (already-finished) stream and reset to the menu.
+  const dismissStalled = useCallback(() => {
+    abortRef.current?.abort();
+    setStalled(null);
+    setRunning(false);
+    try {
+      window.history.replaceState(null, "", window.location.pathname);
+    } catch {
+      /* history unavailable */
+    }
+  }, []);
+
   // You chose to keep watching after dying: drop the death screen and switch to the
   // free spectator camera (same POV as watch-the-agents) for the rest of the round.
+  // Tell the server too (Feature #6), so it lifts the play-mode filter and streams the
+  // hidden game — mafia chat, night actions, roles — for the rest of the match.
   const spectate = useCallback(() => {
     if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
     setEliminated(null);
     setDeathReady(false);
     setSpectating(true);
     setMode("watch");
-  }, []);
+    postControl({ control: "spectate" });
+  }, [postControl]);
 
   // Dev/testing only: take your own life so you can reach the death screen without
   // waiting to be voted out or killed. Removes you from the live game server-side
@@ -1207,8 +1314,10 @@ export function useMafiaGame() {
     requestSkipDiscussion,
   };
 
-  // (re)start the clock on each phase change and whenever it becomes your turn,
-  // so you always get the full, generous duration to act.
+  // (re)start the clock on each phase change. During DISCUSSION we deliberately do NOT
+  // reset on every AI beat — that used to keep the discussion clock alive indefinitely,
+  // so the phase never timed out (Bug #10). A fresh clock for YOUR own scheduled turn is
+  // armed by the separate effect below.
   useEffect(() => {
     if (!running || phaseSecs == null) {
       deadlineRef.current = null;
@@ -1220,7 +1329,20 @@ export function useMafiaGame() {
     setSecondsLeft(phaseSecs);
     setWantsSkip(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase?.phase, phase?.round, running, turn]);
+  }, [phase?.phase, phase?.round, running]);
+
+  // When it becomes YOUR turn (a scheduled human pick: night action / vote), give a
+  // fresh, full clock so you get the whole duration to act — without the every-beat
+  // reset that Bug #10 caused.
+  const isMyTurn = !!myTurn;
+  useEffect(() => {
+    if (!isMyTurn || !running || phaseSecs == null) return;
+    deadlineRef.current = Date.now() + phaseSecs * 1000;
+    expiredRef.current = false;
+    setSecondsLeft(phaseSecs);
+    setWantsSkip(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMyTurn]);
 
   // tick + handle expiry
   useEffect(() => {
@@ -1258,8 +1380,19 @@ export function useMafiaGame() {
       clearTimeout(deathTimerRef.current ?? undefined);
       abortRef.current?.abort();
       musicRef.current?.pause();
+      // Stop any lingering SFX and fully close the Web Audio graph so leaving/re-entering
+      // games doesn't accumulate AudioContexts (Bug #15).
+      for (const a of sfxActiveRef.current) {
+        try {
+          a.pause();
+        } catch {
+          /* ignore */
+        }
+      }
+      sfxActiveRef.current = [];
+      voice.dispose();
     },
-    [],
+    [voice],
   );
 
   return {
@@ -1303,6 +1436,11 @@ export function useMafiaGame() {
     suicide,
     devSimulateEnd,
     skipToVote,
+    // Feature #5: jump to the end of the vote-reveal cutscene (drops the elimination now).
+    skipVoteReveal: releaseHold,
+    // Stall handling (Sweep 2): the message + recovery/leave action.
+    stalled,
+    dismissStalled,
     mafiaChance,
     // derived view-model
     me,
@@ -1332,6 +1470,7 @@ export function useMafiaGame() {
     lookingAtId: speakerExpr?.lookingAt ?? null,
     start,
     submitAction,
+    changeVote,
     skipTurn,
     requestSkipDiscussion,
     sendSpeech,

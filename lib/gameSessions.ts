@@ -16,15 +16,20 @@ export interface GameSession {
   humanId: string | null;
   pending: PendingTurn | null;
   closed: boolean;
+  // Feature #6: set once the human dies and chooses to keep watching. While true, the
+  // wire-level play-mode filter is lifted for this session so the spectator sees the
+  // hidden game — mafia chat, night actions, and every role — like a watch-mode viewer.
+  spectator?: boolean;
   // Live game state reference, so the action route can flip control flags (e.g. a
   // human's "ready to vote" skip) that the running game loop reads. Same object the
   // orchestrator mutates — set once when the game starts.
   state?: GameState | null;
-  // Real-time discussion: the human isn't a scheduled seat — they interject. A line
-  // they submit lands here and the SSE loop injects it at the next beat boundary.
-  // `to` is the addressee id when the human directed the line at a specific agent
-  // (clicked them) — that agent is handed the floor for the very next beat.
-  pendingSay?: (NonNullable<HumanChoice> & { to?: string | null }) | null;
+  // Real-time discussion: the human isn't a scheduled seat — they interject. Lines
+  // they submit are QUEUED here and the SSE loop drains them (in order) at the next
+  // beat boundary, so several quick messages all land instead of the newest clobbering
+  // the rest (Bug #5). `to` is the addressee id when the human directed the line at a
+  // specific agent (clicked them) — that agent is handed the floor for the next beat.
+  sayQueue?: Array<NonNullable<HumanChoice> & { to?: string | null }> | null;
   // Epoch (ms) until which the human is actively composing (recording/typing): while
   // set, the loop holds — it won't let an AI take the floor over them.
   composingUntil?: number;
