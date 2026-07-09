@@ -1,4 +1,4 @@
-'use client';
+"use client";
 
 // ── useMafiaGame — the screen's game-state container ──────────────────────────
 // Owns the connection to the engine (the SSE stream), every piece of game state,
@@ -7,33 +7,44 @@
 // Pure view toggles (drawers, the intro overlay, the dev-role picker) live in the
 // page, since they never touch the engine.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useVoiceQueue } from './useVoiceQueue';
-import { useAuth } from '../../_components/AuthProvider';
-import { PHASE_SECS, MAFIA_CHANCE_START, MAFIA_CHANCE_STEP, MAFIA_CHANCE_KEY } from './constants';
-import type { Announce, Feed, Player, Turn } from './types';
-import { resolveConfig, type ConfigSelection } from '@/games/mafia/config';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVoiceQueue } from "./useVoiceQueue";
+import { useAuth } from "../../_components/AuthProvider";
+import {
+  PHASE_SECS,
+  MAFIA_CHANCE_START,
+  MAFIA_CHANCE_STEP,
+  MAFIA_CHANCE_KEY,
+} from "./constants";
+import type { Announce, Feed, Player, Turn } from "./types";
+import { resolveConfig, type ConfigSelection } from "@/games/mafia/config";
 
 export function useMafiaGame() {
   const { profile, userId } = useAuth();
   const [players, setPlayers] = useState<Player[]>([]);
   const [feed, setFeed] = useState<Feed[]>([]);
-  const [phase, setPhase] = useState<{ phase: string; round: number } | null>(null);
+  const [phase, setPhase] = useState<{ phase: string; round: number } | null>(
+    null,
+  );
   const [selected, setSelected] = useState<string | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
   // Endgame recap data: how each seat met its end (for the unmasking list), and every
   // face the human voted to lynch (for their personal vote-accuracy stat).
-  const [fate, setFate] = useState<Record<string, 'killed' | 'lynched'>>({});
+  const [fate, setFate] = useState<Record<string, "killed" | "lynched">>({});
   const [humanVotes, setHumanVotes] = useState<string[]>([]);
   // The vote-reveal cutscene: ordered voter ids, each one's target, and how many have
   // been flipped so far. Null when not revealing. Drives the papers, camera and tally.
-  const [voteReveal, setVoteReveal] = useState<{ order: string[]; votes: Record<string, string>; step: number } | null>(null);
+  const [voteReveal, setVoteReveal] = useState<{
+    order: string[];
+    votes: Record<string, string>;
+    step: number;
+  } | null>(null);
   // Who has LOCKED IN a vote this round (ids only — never their choice), for the live
   // checkmarks; and the human's own confirmed target (to keep their slip filled in).
   const [committedVoters, setCommittedVoters] = useState<string[]>([]);
   const [myConfirmedVote, setMyConfirmedVote] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  const [mode, setMode] = useState<'watch' | 'play'>('watch');
+  const [mode, setMode] = useState<"watch" | "play">("watch");
   const [gameId, setGameId] = useState<string | null>(null);
   const [humanId, setHumanId] = useState<string | null>(null);
   const [turn, setTurn] = useState<Turn | null>(null);
@@ -43,10 +54,17 @@ export function useMafiaGame() {
   const [speakingId, setSpeakingId] = useState<string | null>(null);
   // The line currently being VOICED (driven by the audio queue when voice is on),
   // so the caption/heads match what you're hearing rather than racing ahead of it.
-  const [speakingLine, setSpeakingLine] = useState<{ who: string; text: string } | null>(null);
+  const [speakingLine, setSpeakingLine] = useState<{
+    who: string;
+    text: string;
+  } | null>(null);
   // The current speaker's PUBLIC expression (emotion + intensity + who they're looking
   // at), synced to the line actually playing — drives body language + gaze in the scene.
-  const [speakerExpr, setSpeakerExpr] = useState<{ emotion: string; intensity: number; lookingAt: string | null } | null>(null);
+  const [speakerExpr, setSpeakerExpr] = useState<{
+    emotion: string;
+    intensity: number;
+    lookingAt: string | null;
+  } | null>(null);
   // True when nothing is queued/playing — used to hold your turn until the table
   // has finished talking, so you're never asked to chime in over a backlog.
   const [voiceIdle, setVoiceIdle] = useState(true);
@@ -55,10 +73,14 @@ export function useMafiaGame() {
   // think at once — each gets its own overhead bubble in the scene.
   const [thinkingIds, setThinkingIds] = useState<string[]>([]);
   // Your private role knowledge, surfaced as obvious overhead tags in the scene.
-  const [findings, setFindings] = useState<Record<string, 'mafia' | 'town'>>({}); // detective results
+  const [findings, setFindings] = useState<Record<string, "mafia" | "town">>(
+    {},
+  ); // detective results
   const [teammates, setTeammates] = useState<string[]>([]); // your Mafia allies' ids
   const [protectedId, setProtectedId] = useState<string | null>(null); // who you (doctor) shielded
-  const [killVotesByAgent, setKillVotesByAgent] = useState<Record<string, string>>({}); // mafia agentId → target id, this night
+  const [killVotesByAgent, setKillVotesByAgent] = useState<
+    Record<string, string>
+  >({}); // mafia agentId → target id, this night
   const announcedTeamRef = useRef(false);
   // Big transient announcement banner (death / doctor-save / quiet night).
   const [announce, setAnnounce] = useState<Announce | null>(null);
@@ -74,7 +96,10 @@ export function useMafiaGame() {
   // game-over menu, even if the same vote ends the round), while `deathReady` arms a
   // beat later — letting the death announcement + sting land before the screen takes
   // over the view.
-  const [eliminated, setEliminated] = useState<{ cause: 'voted' | 'killed'; role: string } | null>(null);
+  const [eliminated, setEliminated] = useState<{
+    cause: "voted" | "killed";
+    role: string;
+  } | null>(null);
   const [deathReady, setDeathReady] = useState(false);
   // True once you choose to keep watching after dying: the camera drops into the free
   // spectator vantage (same POV as watch-the-agents) for the rest of the round.
@@ -89,7 +114,8 @@ export function useMafiaGame() {
   useEffect(() => {
     try {
       const stored = Number(localStorage.getItem(MAFIA_CHANCE_KEY));
-      if (Number.isFinite(stored) && stored >= 0) setMafiaChance(Math.min(100, stored));
+      if (Number.isFinite(stored) && stored >= 0)
+        setMafiaChance(Math.min(100, stored));
     } catch {
       /* localStorage unavailable — start from the default */
     }
@@ -98,9 +124,13 @@ export function useMafiaGame() {
   const voice = useVoiceQueue();
   const musicRef = useRef<HTMLAudioElement | null>(null);
   const soundOnRef = useRef(true);
+  // True while we're replaying a game's history to catch a reconnecting client up
+  // (Sweep 1). During replay we rebuild state silently — no audio, no transient
+  // banners, no vote cutscene — so a resume doesn't flood the room with stale beats.
+  const replayingRef = useRef(false);
 
   const playSfx = useCallback((cue: string) => {
-    if (!soundOnRef.current) return;
+    if (!soundOnRef.current || replayingRef.current) return;
     try {
       const a = new Audio(`/api/sfx?cue=${cue}`);
       a.volume = 0.5;
@@ -111,6 +141,7 @@ export function useMafiaGame() {
   }, []);
 
   const showAnnounce = useCallback((a: Announce) => {
+    if (replayingRef.current) return; // replaying history — don't flash old banners
     setAnnounce(a);
     if (announceTimer.current) clearTimeout(announceTimer.current);
     announceTimer.current = setTimeout(() => setAnnounce(null), 4200);
@@ -118,17 +149,27 @@ export function useMafiaGame() {
 
   // Your own death: let the announcement banner + sting play, then raise the
   // full-screen death screen. We capture your role now (you always know your own).
-  const armDeathScreen = useCallback((cause: 'voted' | 'killed', e: { target?: string; role?: string }) => {
-    const role = e.role ?? playersRef.current.find((p) => p.id === e.target)?.role ?? 'unknown';
-    setEliminated({ cause, role }); // immediate → the game-over menu can't sneak in first
-    setDeathReady(false);
-    if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
-    deathTimerRef.current = setTimeout(() => setDeathReady(true), 2400);
-  }, []);
+  const armDeathScreen = useCallback(
+    (cause: "voted" | "killed", e: { target?: string; role?: string }) => {
+      const role =
+        e.role ??
+        playersRef.current.find((p) => p.id === e.target)?.role ??
+        "unknown";
+      setEliminated({ cause, role }); // immediate → the game-over menu can't sneak in first
+      setDeathReady(false);
+      if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
+      deathTimerRef.current = setTimeout(() => setDeathReady(true), 2400);
+    },
+    [],
+  );
 
   // Stage 5 hero-line gating (config-driven, client-side so it knows the round + cap).
   // heroCfg comes from the server-echoed config; heroUsed resets each new round.
-  const heroCfgRef = useRef<{ model?: string; minIntensity: number; perRound: number } | null>(null);
+  const heroCfgRef = useRef<{
+    model?: string;
+    minIntensity: number;
+    perRound: number;
+  } | null>(null);
   const heroUsedRef = useRef(0);
   const heroRoundRef = useRef(0);
 
@@ -143,7 +184,10 @@ export function useMafiaGame() {
   // called from the voice queue's listeners without going stale across games.
   const gameIdRef = useRef<string | null>(null);
   gameIdRef.current = gameId;
-  const nameOf = useCallback((id: string) => playersRef.current.find((p) => p.id === id)?.name ?? id, []);
+  const nameOf = useCallback(
+    (id: string) => playersRef.current.find((p) => p.id === id)?.name ?? id,
+    [],
+  );
 
   // ── vote-reveal cutscene plumbing ──
   // Votes arrive from the engine in one burst at tally, immediately followed by the
@@ -159,7 +203,10 @@ export function useMafiaGame() {
 
   // End the hold: stop buffering and replay the parked events in arrival order.
   const releaseHold = useCallback(() => {
-    if (revealSafetyRef.current) { clearTimeout(revealSafetyRef.current); revealSafetyRef.current = null; }
+    if (revealSafetyRef.current) {
+      clearTimeout(revealSafetyRef.current);
+      revealSafetyRef.current = null;
+    }
     holdRef.current = false;
     setVoteReveal(null);
     setCommittedVoters([]); // fresh checkmarks for any runoff that follows
@@ -175,11 +222,21 @@ export function useMafiaGame() {
     revealStartRef.current = null;
     const buf = voteBufRef.current;
     voteBufRef.current = [];
-    if (!buf.length) { releaseHold(); return; }
+    if (!buf.length) {
+      releaseHold();
+      return;
+    }
     const votes: Record<string, string> = {};
     for (const v of buf) votes[v.voter] = v.target;
     // Drop all the lines into the transcript up front; the cutscene paces the visuals.
-    setFeed((f) => [...f, ...buf.map((v) => ({ k: 'vote' as const, who: v.voter, target: v.target }))]);
+    setFeed((f) => [
+      ...f,
+      ...buf.map((v) => ({
+        k: "vote" as const,
+        who: v.voter,
+        target: v.target,
+      })),
+    ]);
     setVoteReveal({ order: buf.map((v) => v.voter), votes, step: 0 });
     revealSafetyRef.current = setTimeout(releaseHold, 45000); // never strand the game (≈4.5s/voter)
   }, [releaseHold]);
@@ -187,17 +244,27 @@ export function useMafiaGame() {
   const postControl = useCallback((body: Record<string, unknown>) => {
     const id = gameIdRef.current;
     if (!id) return;
-    fetch('/api/game/action', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gameId: id, ...body }) }).catch(() => {});
+    fetch("/api/game/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gameId: id, ...body }),
+    }).catch(() => {});
   }, []);
   // Tell the loop a line finished voicing → it may advance to the next AI beat (this
   // is what paces AI talk to the audio instead of racing ahead).
-  const ackVoiceDone = useCallback(() => postControl({ control: 'voiceDone' }), [postControl]);
+  const ackVoiceDone = useCallback(
+    () => postControl({ control: "voiceDone" }),
+    [postControl],
+  );
   // Tell the loop you're actively composing (mic held / typing) → it holds the floor
   // for you and won't let an AI take over until you send or stop.
-  const signalComposing = useCallback(() => postControl({ control: 'composing' }), [postControl]);
+  const signalComposing = useCallback(
+    () => postControl({ control: "composing" }),
+    [postControl],
+  );
 
   useEffect(() => {
-    feedEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    feedEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [feed, turn]);
 
   // Keep all audio (voices, music, SFX) in sync with the 🔊 toggle.
@@ -205,7 +272,8 @@ export function useMafiaGame() {
     voice.setEnabled(voiceOn);
     soundOnRef.current = voiceOn;
     if (!voiceOn) musicRef.current?.pause();
-    else if (musicRef.current?.src) void musicRef.current.play().catch(() => {});
+    else if (musicRef.current?.src)
+      void musicRef.current.play().catch(() => {});
   }, [voiceOn, voice]);
 
   // The audio queue paces the on-screen floor: a line's caption + speaking head
@@ -218,7 +286,11 @@ export function useMafiaGame() {
       onStart: (item) => {
         setSpeakingId(item.id);
         setSpeakingLine({ who: item.id, text: item.text });
-        setSpeakerExpr({ emotion: item.emotion ?? 'neutral', intensity: item.intensity ?? 0.4, lookingAt: item.lookingAt ?? null });
+        setSpeakerExpr({
+          emotion: item.emotion ?? "neutral",
+          intensity: item.intensity ?? 0.4,
+          lookingAt: item.lookingAt ?? null,
+        });
       },
       onEnd: (item) => {
         setSpeakingId((cur) => (cur === item.id ? null : cur));
@@ -233,27 +305,35 @@ export function useMafiaGame() {
     (e: any) => {
       // While the vote-reveal cutscene is running, park everything that follows the vote
       // burst (the elimination, the next phase) so it lands AFTER the reveal, not on top.
-      if (holdRef.current && e.type !== 'vote') {
+      if (holdRef.current && e.type !== "vote") {
         heldRef.current.push(e);
         return;
       }
       switch (e.type) {
-        case 'game':
+        case "game":
           setGameId(e.gameId);
           setMode(e.mode);
           setHumanId(e.humanId);
           // Honor the server-resolved config (e.g. voiceEnabled may have been clamped).
-          if (e.config && typeof e.config.voiceEnabled === 'boolean') setVoiceOn(e.config.voiceEnabled);
+          if (e.config && typeof e.config.voiceEnabled === "boolean")
+            setVoiceOn(e.config.voiceEnabled);
           // Stage 5: capture the hero-line gating config (off unless heroLineModel set).
           if (e.config) {
             heroCfgRef.current = {
-              model: typeof e.config.heroLineModel === 'string' ? e.config.heroLineModel : undefined,
-              minIntensity: Number.isFinite(e.config.heroLineMinIntensity) ? e.config.heroLineMinIntensity : 0.85,
-              perRound: Number.isFinite(e.config.heroLinesPerRound) ? e.config.heroLinesPerRound : 1,
+              model:
+                typeof e.config.heroLineModel === "string"
+                  ? e.config.heroLineModel
+                  : undefined,
+              minIntensity: Number.isFinite(e.config.heroLineMinIntensity)
+                ? e.config.heroLineMinIntensity
+                : 0.85,
+              perRound: Number.isFinite(e.config.heroLinesPerRound)
+                ? e.config.heroLinesPerRound
+                : 1,
             };
           }
           break;
-        case 'setup': {
+        case "setup": {
           setPlayers(e.players.map((p: Player) => ({ ...p, alive: true })));
           setPhase({ phase: e.phase, round: e.round });
           // Only auto-select the human (for the minds panel); in watch mode leave
@@ -264,7 +344,10 @@ export function useMafiaGame() {
           // Pity timer (play mode only): now that this game's role is sealed, reset
           // the odds if you drew Mafia, otherwise nudge them up for next time.
           if (meSeat) {
-            const next = meSeat.role === 'mafia' ? MAFIA_CHANCE_START : Math.min(100, mafiaChanceRef.current + MAFIA_CHANCE_STEP);
+            const next =
+              meSeat.role === "mafia"
+                ? MAFIA_CHANCE_START
+                : Math.min(100, mafiaChanceRef.current + MAFIA_CHANCE_STEP);
             mafiaChanceRef.current = next;
             setMafiaChance(next);
             try {
@@ -275,165 +358,341 @@ export function useMafiaGame() {
           }
           break;
         }
-        case 'phase': {
+        case "phase": {
           voice.reset(); // drop any leftover spoken backlog before the phase turns over
-          if (e.round !== heroRoundRef.current) { heroRoundRef.current = e.round; heroUsedRef.current = 0; } // new round → refill the hero cap
+          if (e.round !== heroRoundRef.current) {
+            heroRoundRef.current = e.round;
+            heroUsedRef.current = 0;
+          } // new round → refill the hero cap
           setPhase({ phase: e.phase, round: e.round });
-          setFeed((f) => [...f, { k: 'phase', phase: e.phase, round: e.round }]);
+          setFeed((f) => [
+            ...f,
+            { k: "phase", phase: e.phase, round: e.round },
+          ]);
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
           setCommittedVoters([]); // fresh slate of vote checkmarks each phase
           setMyConfirmedVote(null);
-          const night = e.phase === 'NIGHT';
+          const night = e.phase === "NIGHT";
           setNightWake(null); // reset the narrator each phase; 'wake' events drive it at night
           if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
-          if (night) playSfx('night');
+          if (night) playSfx("night");
           break;
         }
-        case 'speak': {
+        case "speak": {
           const isHuman = e.agent === humanIdRef.current;
           // Reveal the line in the transcript exactly once. A seat never speaks twice
           // in a row, so an identical back-to-back line is always a stray duplicate.
           setFeed((f) => {
             const last = f[f.length - 1];
-            if (last && last.k === 'speak' && last.who === e.agent && last.text === e.text) return f;
-            return [...f, { k: 'speak', who: e.agent, text: e.text }];
+            if (
+              last &&
+              last.k === "speak" &&
+              last.who === e.agent &&
+              last.text === e.text
+            )
+              return f;
+            return [...f, { k: "speak", who: e.agent, text: e.text }];
           });
+          if (replayingRef.current) break; // history replay: transcript only, no audio/caption
           if (!isHuman && soundOnRef.current) {
             // Stage 5 gate: a rare decisive line gets the richer v3 read IF the config
             // enables it, the line clears the intensity threshold, and this round's cap
             // isn't spent. Everything else stays on the fast flash path (Stage 1).
             const hc = heroCfgRef.current;
-            const intensity = typeof e.intensity === 'number' ? e.intensity : 0.4;
+            const intensity =
+              typeof e.intensity === "number" ? e.intensity : 0.4;
             let hero = false;
-            if (hc?.model && intensity >= hc.minIntensity && heroUsedRef.current < hc.perRound) {
+            if (
+              hc?.model &&
+              intensity >= hc.minIntensity &&
+              heroUsedRef.current < hc.perRound
+            ) {
               hero = true;
               heroUsedRef.current += 1;
             }
             // Voice on (AI line): the audio queue paces the caption + speaking head,
             // one line at a time, so the floor never jumps ahead to the next model. The
             // expression rides the item so it lands exactly when this line plays.
-            voice.enqueue({ id: e.agent, name: nameOf(e.agent), text: e.text, emotion: e.emotion, intensity: e.intensity, lookingAt: e.lookingAt, hero });
+            voice.enqueue({
+              id: e.agent,
+              name: nameOf(e.agent),
+              text: e.text,
+              emotion: e.emotion,
+              intensity: e.intensity,
+              lookingAt: e.lookingAt,
+              hero,
+            });
           } else {
             // Your OWN line (no need to read it back to you) or a muted AI line: no
             // audio to pace against — hold the caption a readable, text-length beat.
             setSpeakingId(e.agent);
             setSpeakingLine({ who: e.agent, text: e.text });
-            setSpeakerExpr({ emotion: e.emotion ?? 'neutral', intensity: e.intensity ?? 0.4, lookingAt: e.lookingAt ?? null });
+            setSpeakerExpr({
+              emotion: e.emotion ?? "neutral",
+              intensity: e.intensity ?? 0.4,
+              lookingAt: e.lookingAt ?? null,
+            });
             if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
-            speakTimerRef.current = setTimeout(() => {
-              setSpeakingId((cur) => (cur === e.agent ? null : cur));
-              setSpeakerExpr(null);
-              if (!isHuman) ackVoiceDone(); // muted: pace the next AI beat to reading speed
-            }, Math.max(2000, (e.text?.length ?? 0) * 60));
+            speakTimerRef.current = setTimeout(
+              () => {
+                setSpeakingId((cur) => (cur === e.agent ? null : cur));
+                setSpeakerExpr(null);
+                if (!isHuman) ackVoiceDone(); // muted: pace the next AI beat to reading speed
+              },
+              Math.max(2000, (e.text?.length ?? 0) * 60),
+            );
           }
           break;
         }
-        case 'thinking':
-          setThinkingIds((cur) => (e.on ? (cur.includes(e.agent) ? cur : [...cur, e.agent]) : cur.filter((id) => id !== e.agent)));
+        case "thinking":
+          setThinkingIds((cur) =>
+            e.on
+              ? cur.includes(e.agent)
+                ? cur
+                : [...cur, e.agent]
+              : cur.filter((id) => id !== e.agent),
+          );
           break;
-        case 'wake':
+        case "wake":
           // A night role just started acting — narrate it now (anonymous: role only).
           setNightWake(e.role);
           break;
-        case 'whisper':
-          setFeed((f) => [...f, { k: 'whisper', who: e.agent, text: e.text }]);
+        case "whisper":
+          setFeed((f) => [...f, { k: "whisper", who: e.agent, text: e.text }]);
           break;
-        case 'death':
+        case "death":
           // Mark them dead. The role is present on the wire only when the game reveals
           // it (config.revealRoleOnDeath) or it's your own death — otherwise it stays secret.
-          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) } : p)));
-          setFate((m) => ({ ...m, [e.target]: 'killed' }));
-          setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(e.target)} was killed in the night.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ''}` }]);
-          showAnnounce({ eyebrow: 'Killed in the night', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
-          playSfx('death');
-          if (e.target === humanIdRef.current) armDeathScreen('killed', e);
+          setPlayers((ps) =>
+            ps.map((p) =>
+              p.id === e.target
+                ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) }
+                : p,
+            ),
+          );
+          setFate((m) => ({ ...m, [e.target]: "killed" }));
+          setFeed((f) => [
+            ...f,
+            {
+              k: "system",
+              text: `☠ ${nameOf(e.target)} was killed in the night.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ""}`,
+            },
+          ]);
+          showAnnounce({
+            eyebrow: "Killed in the night",
+            title: nameOf(e.target),
+            face: nameOf(e.target),
+            tone: "death",
+          });
+          playSfx("death");
+          if (e.target === humanIdRef.current) armDeathScreen("killed", e);
           break;
-        case 'reveal':
-          setPlayers((ps) => ps.map((p) => (p.id === e.target ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) } : p)));
-          setFate((m) => ({ ...m, [e.target]: 'lynched' }));
-          setFeed((f) => [...f, { k: 'system', text: `🗳 ${nameOf(e.target)} was voted out.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ''}` }]);
-          showAnnounce({ eyebrow: 'Voted out by the table', title: nameOf(e.target), face: nameOf(e.target), tone: 'death' });
-          playSfx('reveal');
-          if (e.target === humanIdRef.current) armDeathScreen('voted', e);
+        case "reveal":
+          setPlayers((ps) =>
+            ps.map((p) =>
+              p.id === e.target
+                ? { ...p, alive: false, ...(e.role ? { role: e.role } : {}) }
+                : p,
+            ),
+          );
+          setFate((m) => ({ ...m, [e.target]: "lynched" }));
+          setFeed((f) => [
+            ...f,
+            {
+              k: "system",
+              text: `🗳 ${nameOf(e.target)} was voted out.${e.role && e.target !== humanIdRef.current ? ` (was ${e.role})` : ""}`,
+            },
+          ]);
+          showAnnounce({
+            eyebrow: "Voted out by the table",
+            title: nameOf(e.target),
+            face: nameOf(e.target),
+            tone: "death",
+          });
+          playSfx("reveal");
+          if (e.target === humanIdRef.current) armDeathScreen("voted", e);
           break;
-        case 'night':
+        case "night":
           // Anonymous night outcome — no names of who was targeted or who saved them.
-          if (e.outcome === 'saved') {
-            setFeed((f) => [...f, { k: 'system', text: '🛡 The Mafia struck — but the doctor saved their target. No one died.' }]);
-            showAnnounce({ eyebrow: "The doctor's work", title: 'A life was saved', face: null, tone: 'save' });
-            playSfx('reveal');
-          } else if (e.outcome === 'night0') {
+          if (e.outcome === "saved") {
+            setFeed((f) => [
+              ...f,
+              {
+                k: "system",
+                text: "🛡 The Mafia struck — but the doctor saved their target. No one died.",
+              },
+            ]);
+            showAnnounce({
+              eyebrow: "The doctor's work",
+              title: "A life was saved",
+              face: null,
+              tone: "save",
+            });
+            playSfx("reveal");
+          } else if (e.outcome === "night0") {
             // The opening night is a guaranteed no-kill by the rules — frame it that
             // way, not as a mysteriously "quiet" night.
-            setFeed((f) => [...f, { k: 'system', text: '🌙 No one can be killed on the first night — the hunt begins.' }]);
-            showAnnounce({ eyebrow: 'Dawn breaks', title: 'A peaceful first night', face: null, tone: 'quiet' });
+            setFeed((f) => [
+              ...f,
+              {
+                k: "system",
+                text: "🌙 No one can be killed on the first night — the hunt begins.",
+              },
+            ]);
+            showAnnounce({
+              eyebrow: "Dawn breaks",
+              title: "A peaceful first night",
+              face: null,
+              tone: "quiet",
+            });
           } else {
-            setFeed((f) => [...f, { k: 'system', text: '🌙 The night passed quietly — no one died.' }]);
-            showAnnounce({ eyebrow: 'Dawn breaks', title: 'A quiet night', face: null, tone: 'quiet' });
+            setFeed((f) => [
+              ...f,
+              {
+                k: "system",
+                text: "🌙 The night passed quietly — no one died.",
+              },
+            ]);
+            showAnnounce({
+              eyebrow: "Dawn breaks",
+              title: "A quiet night",
+              face: null,
+              tone: "quiet",
+            });
           }
           break;
-        case 'vote':
+        case "vote":
           // Don't render the vote live — capture the burst and reveal it seat-by-seat.
           // Engage the hold so the elimination that follows is deferred to the cutscene's
           // end, and kick off the reveal once the whole synchronous burst has landed.
+          if (replayingRef.current) {
+            // Replaying history: no cutscene — just record the final line + checkmark.
+            setFeed((f) => [
+              ...f,
+              { k: "vote", who: e.agent, target: e.target },
+            ]);
+            setCommittedVoters((s) =>
+              s.includes(e.agent) ? s : [...s, e.agent],
+            );
+            break;
+          }
           holdRef.current = true;
           voteBufRef.current.push({ voter: e.agent, target: e.target });
-          if (!revealStartRef.current) revealStartRef.current = setTimeout(startVoteReveal, 0);
+          if (!revealStartRef.current)
+            revealStartRef.current = setTimeout(startVoteReveal, 0);
           break;
-        case 'action':
+        case "action":
           // A Mafia teammate's kill proposal (only reaches you when you're Mafia).
-          if (e.kind === 'propose_kill' && e.target) setKillVotesByAgent((m) => ({ ...m, [e.agent]: e.target }));
+          if (e.kind === "propose_kill" && e.target)
+            setKillVotesByAgent((m) => ({ ...m, [e.agent]: e.target }));
           // A vote commitment (target stripped server-side) → check this voter off.
-          if (e.kind === 'vote') setCommittedVoters((s) => (s.includes(e.agent) ? s : [...s, e.agent]));
+          if (e.kind === "vote")
+            setCommittedVoters((s) =>
+              s.includes(e.agent) ? s : [...s, e.agent],
+            );
           break;
-        case 'knowledge':
-          setFeed((f) => [...f, { k: 'knowledge', who: e.agent, text: e.text }]);
+        case "knowledge":
+          setFeed((f) => [
+            ...f,
+            { k: "knowledge", who: e.agent, text: e.text },
+          ]);
           // A detective finding about a specific player → mark them in the scene.
-          if (e.target) setFindings((m) => ({ ...m, [e.target]: e.result === 'MAFIA' ? 'mafia' : 'town' }));
+          if (e.target)
+            setFindings((m) => ({
+              ...m,
+              [e.target]: e.result === "MAFIA" ? "mafia" : "town",
+            }));
           break;
-        case 'request_action': {
+        case "request_action": {
           const t = e as Turn;
+          // History replay: a still-parked turn is re-offered live after 'resumed', so
+          // ignore replayed prompts — they may already be answered/stale.
+          if (replayingRef.current) break;
           setTurn(t);
           // Capture (and announce, once) your Mafia teammates so the scene can tag them.
           if (t.teammates?.length) {
             setTeammates(t.teammates.map((x) => x.id));
             if (!announcedTeamRef.current) {
               announcedTeamRef.current = true;
-              const names = t.teammates.map((x) => x.name).join(', ');
-              setFeed((f) => [...f, { k: 'system', text: `🕴 Your Mafia ${t.teammates.length > 1 ? 'allies' : 'ally'}: ${names}` }]);
+              const names = t.teammates.map((x) => x.name).join(", ");
+              setFeed((f) => [
+                ...f,
+                {
+                  k: "system",
+                  text: `🕴 Your Mafia ${t.teammates.length > 1 ? "allies" : "ally"}: ${names}`,
+                },
+              ]);
             }
           }
           break;
         }
-        case 'turn_over':
+        case "turn_over":
           // The server passed our idle discussion turn (an eager AI filled the
           // silence instead). Clear it so the bar shows "the table is talking"
           // rather than a stale "your turn" — we'll be offered the floor again later.
           setTurn((t) => (t && t.agent === e.agent ? null : t));
           break;
-        case 'win': {
+        case "win": {
           voice.reset();
           setWinner(e.winner);
           // Unmask every seat for the endgame reveal: fold the now-public roles into
           // player state so the scene can flip their true allegiance up overhead.
           if (e.roles?.length) {
-            const roleById = new Map<string, string>((e.roles as { id: string; role: string }[]).map((r) => [r.id, r.role]));
-            setPlayers((ps) => ps.map((p) => (roleById.has(p.id) ? { ...p, role: roleById.get(p.id)! } : p)));
+            const roleById = new Map<string, string>(
+              (e.roles as { id: string; role: string }[]).map((r) => [
+                r.id,
+                r.role,
+              ]),
+            );
+            setPlayers((ps) =>
+              ps.map((p) =>
+                roleById.has(p.id) ? { ...p, role: roleById.get(p.id)! } : p,
+              ),
+            );
           }
-          setFeed((f) => [...f, { k: 'win', winner: e.winner }]);
-          playSfx('win');
+          setFeed((f) => [...f, { k: "win", winner: e.winner }]);
+          playSfx("win");
           if (musicRef.current) musicRef.current.volume = 0.05;
           break;
         }
-        case 'done':
+        case "done":
           setTurn(null);
           break;
-        case 'error':
-          setFeed((f) => [...f, { k: 'error', text: e.message }]);
+        case "resume":
+          // A reconnect: the server is about to replay the whole game so far. Rebuild
+          // silently — clear any in-flight cutscene so replayed events don't collide.
+          replayingRef.current = true;
+          holdRef.current = false;
+          heldRef.current = [];
+          voteBufRef.current = [];
+          if (revealStartRef.current) {
+            clearTimeout(revealStartRef.current);
+            revealStartRef.current = null;
+          }
+          if (revealSafetyRef.current) {
+            clearTimeout(revealSafetyRef.current);
+            revealSafetyRef.current = null;
+          }
+          setVoteReveal(null);
+          break;
+        case "resumed":
+          // Catch-up finished — go live. Real-time events resume normal handling.
+          replayingRef.current = false;
+          break;
+        case "error":
+          setFeed((f) => [...f, { k: "error", text: e.message }]);
           break;
       }
     },
-    [nameOf, voice, playSfx, showAnnounce, ackVoiceDone, armDeathScreen, startVoteReveal],
+    [
+      nameOf,
+      voice,
+      playSfx,
+      showAnnounce,
+      ackVoiceDone,
+      armDeathScreen,
+      startVoteReveal,
+    ],
   );
   handleRef.current = handle; // late binding so releaseHold can flush parked events
 
@@ -444,54 +703,101 @@ export function useMafiaGame() {
     const { order, step } = voteReveal;
     if (step < order.length) {
       // ~4.5s per voter: a front shot of them, the hold + 180° flip, then a beat to read.
-      const t = setTimeout(() => setVoteReveal((prev) => (prev ? { ...prev, step: prev.step + 1 } : prev)), 4500);
+      const t = setTimeout(
+        () =>
+          setVoteReveal((prev) =>
+            prev ? { ...prev, step: prev.step + 1 } : prev,
+          ),
+        4500,
+      );
       return () => clearTimeout(t);
     }
     const t = setTimeout(releaseHold, 1600); // linger on the full table, then the body drops
     return () => clearTimeout(t);
   }, [voteReveal, releaseHold]);
 
+  // Wipe all per-game state back to a clean slate. Shared by a fresh start and a
+  // reconnect (which replays the game's history onto this blank state).
+  const resetGameState = useCallback(() => {
+    setPlayers([]);
+    setFeed([]);
+    setWinner(null);
+    setFate({});
+    setHumanVotes([]);
+    // tear down any in-flight vote-reveal cutscene
+    setVoteReveal(null);
+    setCommittedVoters([]);
+    setMyConfirmedVote(null);
+    voteBufRef.current = [];
+    heldRef.current = [];
+    holdRef.current = false;
+    if (revealStartRef.current) {
+      clearTimeout(revealStartRef.current);
+      revealStartRef.current = null;
+    }
+    if (revealSafetyRef.current) {
+      clearTimeout(revealSafetyRef.current);
+      revealSafetyRef.current = null;
+    }
+    setPhase(null);
+    setTurn(null);
+    setSelected(null);
+    setSpeakingId(null);
+    setSpeakingLine(null);
+    setSpeakerExpr(null);
+    setVoiceIdle(true);
+    setThinkingIds([]);
+    setNightWake(null);
+    if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
+    setFindings({});
+    setTeammates([]);
+    setProtectedId(null);
+    setKillVotesByAgent({});
+    setAnnounce(null);
+    setSecondsLeft(null);
+    setWantsSkip(false);
+    setEliminated(null);
+    setDeathReady(false);
+    setSpectating(false);
+    if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
+    announcedTeamRef.current = false;
+  }, []);
+
+  // Read an SSE response body, splitting on blank lines and dispatching each event.
+  // Shared by start() and reconnect().
+  const pumpStream = useCallback(
+    async (res: Response) => {
+      if (!res.body) throw new Error("no stream");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const blocks = buf.split("\n\n");
+        buf = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const line = block.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          handle(JSON.parse(line.slice(6)));
+        }
+      }
+    },
+    [handle],
+  );
+
   const start = useCallback(
-    async (m: 'watch' | 'play', devRoleArg?: string, selection?: ConfigSelection) => {
+    async (
+      m: "watch" | "play",
+      devRoleArg?: string,
+      selection?: ConfigSelection,
+    ) => {
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
-      setPlayers([]);
-      setFeed([]);
-      setWinner(null);
-      setFate({});
-      setHumanVotes([]);
-      // tear down any in-flight vote-reveal cutscene
-      setVoteReveal(null);
-      setCommittedVoters([]);
-      setMyConfirmedVote(null);
-      voteBufRef.current = [];
-      heldRef.current = [];
-      holdRef.current = false;
-      if (revealStartRef.current) { clearTimeout(revealStartRef.current); revealStartRef.current = null; }
-      if (revealSafetyRef.current) { clearTimeout(revealSafetyRef.current); revealSafetyRef.current = null; }
-      setPhase(null);
-      setTurn(null);
-      setSelected(null);
-      setSpeakingId(null);
-      setSpeakingLine(null);
-      setSpeakerExpr(null);
-      setVoiceIdle(true);
-      setThinkingIds([]);
-      setNightWake(null);
-      if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
-      setFindings({});
-      setTeammates([]);
-      setProtectedId(null);
-      setKillVotesByAgent({});
-      setAnnounce(null);
-      setSecondsLeft(null);
-      setWantsSkip(false);
-      setEliminated(null);
-      setDeathReady(false);
-      setSpectating(false);
-      if (deathTimerRef.current) clearTimeout(deathTimerRef.current);
-      announcedTeamRef.current = false;
+      replayingRef.current = false;
+      resetGameState();
       setMode(m);
       setRunning(true);
       // Mint the game (session) id client-side so the game is addressable immediately:
@@ -502,7 +808,11 @@ export function useMafiaGame() {
       setGameId(id);
       gameIdRef.current = id;
       try {
-        window.history.replaceState(null, '', `${window.location.pathname}?id=${id}`);
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}?id=${id}`,
+        );
       } catch {
         /* history unavailable — the id still drives the game, just not the URL */
       }
@@ -516,74 +826,153 @@ export function useMafiaGame() {
       // Start the looping tension bed (first load generates it server-side, ~5s).
       const bed = musicRef.current;
       if (bed && soundOnRef.current) {
-        bed.src = '/api/music';
+        bed.src = "/api/music";
         bed.loop = true;
         bed.volume = 0.12;
         void bed.play().catch(() => {});
       }
 
       try {
-        const res = await fetch('/api/game', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const res = await fetch("/api/game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             id,
             mode: m,
             ...(userId ? { userId } : {}),
-            ...(m === 'play' && profile?.displayName ? { playerName: profile.displayName } : {}),
+            ...(m === "play" && profile?.displayName
+              ? { playerName: profile.displayName }
+              : {}),
             ...(devRoleArg ? { devRole: devRoleArg } : {}),
             ...(selection ? { selection } : {}),
-            ...(m === 'play' ? { mafiaChance: mafiaChanceRef.current } : {}),
+            ...(m === "play" ? { mafiaChance: mafiaChanceRef.current } : {}),
           }),
           signal: ac.signal,
         });
-        if (!res.body) throw new Error('no stream');
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const blocks = buf.split('\n\n');
-          buf = blocks.pop() ?? '';
-          for (const block of blocks) {
-            const line = block.split('\n').find((l) => l.startsWith('data: '));
-            if (!line) continue;
-            handle(JSON.parse(line.slice(6)));
-          }
-        }
+        if (!res.body) throw new Error("no stream");
+        await pumpStream(res);
       } catch (err: any) {
-        if (err?.name !== 'AbortError') setFeed((f) => [...f, { k: 'error', text: err?.message ?? 'stream failed' }]);
+        if (err?.name !== "AbortError")
+          setFeed((f) => [
+            ...f,
+            { k: "error", text: err?.message ?? "stream failed" },
+          ]);
       } finally {
         setRunning(false);
       }
     },
-    [handle, voice, profile, userId],
+    [pumpStream, resetGameState, voice, profile, userId],
   );
+
+  // Reconnect to an already-running game (e.g. after a page refresh): reuse the same
+  // id and ask the server to resume. The server replays the game so far, then goes
+  // live. If there's no live game to resume, it 404s and we fall back to the menu.
+  const reconnect = useCallback(
+    async (id: string) => {
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+      replayingRef.current = false;
+      resetGameState();
+      setGameId(id);
+      gameIdRef.current = id;
+      setRunning(true);
+      voice.reset();
+      try {
+        const res = await fetch("/api/game", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id,
+            resume: true,
+            ...(userId ? { userId } : {}),
+          }),
+          signal: ac.signal,
+        });
+        if (!res.ok) {
+          // No live game to rejoin — drop the stale ?id= and show the menu.
+          try {
+            window.history.replaceState(null, "", window.location.pathname);
+          } catch {
+            /* history unavailable */
+          }
+          setGameId(null);
+          gameIdRef.current = null;
+          setRunning(false);
+          return;
+        }
+        await pumpStream(res);
+      } catch (err: any) {
+        if (err?.name !== "AbortError")
+          setFeed((f) => [
+            ...f,
+            { k: "error", text: err?.message ?? "reconnect failed" },
+          ]);
+      } finally {
+        replayingRef.current = false;
+        setRunning(false);
+      }
+    },
+    [pumpStream, resetGameState, voice, userId],
+  );
+
+  // On mount, if the URL carries a game id (a refresh / shared link), try to rejoin
+  // that running game instead of showing a blank menu. We call through a ref so this
+  // fires only on a real mount — never again when `reconnect` changes identity (e.g.
+  // once auth resolves userId), which would otherwise reset a live game mid-play. No
+  // didInit guard: the effect owns its own reconnect, so a StrictMode mount→unmount→
+  // mount cleanly re-attaches (the first attempt is aborted by teardown, the second
+  // succeeds).
+  const reconnectRef = useRef(reconnect);
+  reconnectRef.current = reconnect;
+  useEffect(() => {
+    let id: string | null = null;
+    try {
+      id = new URLSearchParams(window.location.search).get("id");
+    } catch {
+      /* no window / search */
+    }
+    const UUID =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (id && UUID.test(id)) void reconnectRef.current(id);
+  }, []);
 
   const submitAction = useCallback(
     async (tool: string, args: any) => {
       setTurn(null);
       // Local confirmation for your own secret night actions.
-      if (tool === 'protect') {
+      if (tool === "protect") {
         setProtectedId(args.target ?? null);
-        setFeed((f) => [...f, { k: 'system', text: `🛡 You protected ${nameOf(args.target)} tonight.` }]);
+        setFeed((f) => [
+          ...f,
+          {
+            k: "system",
+            text: `🛡 You protected ${nameOf(args.target)} tonight.`,
+          },
+        ]);
       }
-      if (tool === 'investigate') setFeed((f) => [...f, { k: 'system', text: `🔎 You investigated ${nameOf(args.target)}…` }]);
+      if (tool === "investigate")
+        setFeed((f) => [
+          ...f,
+          { k: "system", text: `🔎 You investigated ${nameOf(args.target)}…` },
+        ]);
       // Remember who you voted to lynch, for the endgame recap's vote-accuracy stat,
       // and check yourself off / keep your slip filled in for the rest of the phase.
-      if (tool === 'vote' && args.target) {
+      if (tool === "vote" && args.target) {
         setHumanVotes((v) => [...v, args.target]);
         setMyConfirmedVote(args.target);
-        if (humanId) setCommittedVoters((s) => (s.includes(humanId) ? s : [...s, humanId]));
+        if (humanId)
+          setCommittedVoters((s) =>
+            s.includes(humanId) ? s : [...s, humanId],
+          );
       }
       // Show your own kill vote immediately (the engine echoes it back too).
-      if (tool === 'mafia_propose_kill' && humanId && args.target) setKillVotesByAgent((m) => ({ ...m, [humanId]: args.target }));
+      if (tool === "mafia_propose_kill" && humanId && args.target)
+        setKillVotesByAgent((m) => ({ ...m, [humanId]: args.target }));
       try {
-        await fetch('/api/game/action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        await fetch("/api/game/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ gameId, tool, args }),
         });
       } catch {
@@ -597,9 +986,9 @@ export function useMafiaGame() {
   const skipTurn = useCallback(async () => {
     setTurn(null);
     try {
-      await fetch('/api/game/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      await fetch("/api/game/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gameId, skip: true }),
       });
     } catch {
@@ -611,10 +1000,10 @@ export function useMafiaGame() {
   const requestSkipDiscussion = useCallback(
     async (value: boolean) => {
       try {
-        await fetch('/api/game/action', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ gameId, control: 'skipDiscussion', value }),
+        await fetch("/api/game/action", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ gameId, control: "skipDiscussion", value }),
         });
       } catch {
         /* ignore */
@@ -626,10 +1015,10 @@ export function useMafiaGame() {
   // Dev/testing: force the discussion to end and jump straight to the vote.
   const skipToVote = useCallback(async () => {
     try {
-      await fetch('/api/game/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gameId, control: 'forceVote' }),
+      await fetch("/api/game/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gameId, control: "forceVote" }),
       });
     } catch {
       /* ignore */
@@ -643,7 +1032,7 @@ export function useMafiaGame() {
     setEliminated(null);
     setDeathReady(false);
     setSpectating(true);
-    setMode('watch');
+    setMode("watch");
   }, []);
 
   // Dev/testing only: take your own life so you can reach the death screen without
@@ -652,12 +1041,22 @@ export function useMafiaGame() {
   const suicide = useCallback(() => {
     const id = humanIdRef.current;
     if (!id) return;
-    setPlayers((ps) => ps.map((p) => (p.id === id ? { ...p, alive: false } : p)));
-    setFeed((f) => [...f, { k: 'system', text: `☠ ${nameOf(id)} met a sudden end.` }]);
-    showAnnounce({ eyebrow: 'A sudden end', title: nameOf(id), face: nameOf(id), tone: 'death' });
-    playSfx('death');
-    armDeathScreen('killed', { target: id });
-    postControl({ control: 'suicide' }); // tell the loop to drop our seat so it continues
+    setPlayers((ps) =>
+      ps.map((p) => (p.id === id ? { ...p, alive: false } : p)),
+    );
+    setFeed((f) => [
+      ...f,
+      { k: "system", text: `☠ ${nameOf(id)} met a sudden end.` },
+    ]);
+    showAnnounce({
+      eyebrow: "A sudden end",
+      title: nameOf(id),
+      face: nameOf(id),
+      tone: "death",
+    });
+    playSfx("death");
+    armDeathScreen("killed", { target: id });
+    postControl({ control: "suicide" }); // tell the loop to drop our seat so it continues
   }, [nameOf, showAnnounce, playSfx, armDeathScreen, postControl]);
 
   // Dev/testing only: populate plausible roles for any STILL-HIDDEN seats (and seed a
@@ -665,29 +1064,41 @@ export function useMafiaGame() {
   // playing a game to completion. Known roles (watch mode) are left untouched.
   const devSimulateEnd = useCallback(() => {
     if (!players.length) return;
-    let mafiaLeft = Math.max(1, Math.round(players.length / 4)) - players.filter((p) => p.role === 'mafia').length;
-    let needDet = !players.some((p) => p.role === 'detective');
-    let needDoc = !players.some((p) => p.role === 'doctor');
+    let mafiaLeft =
+      Math.max(1, Math.round(players.length / 4)) -
+      players.filter((p) => p.role === "mafia").length;
+    let needDet = !players.some((p) => p.role === "detective");
+    let needDoc = !players.some((p) => p.role === "doctor");
     const next = players.map((p) => {
-      if (p.role !== 'unknown') return p;
-      let role = 'villager';
-      if (mafiaLeft > 0) { role = 'mafia'; mafiaLeft -= 1; }
-      else if (needDet) { role = 'detective'; needDet = false; }
-      else if (needDoc) { role = 'doctor'; needDoc = false; }
+      if (p.role !== "unknown") return p;
+      let role = "villager";
+      if (mafiaLeft > 0) {
+        role = "mafia";
+        mafiaLeft -= 1;
+      } else if (needDet) {
+        role = "detective";
+        needDet = false;
+      } else if (needDoc) {
+        role = "doctor";
+        needDoc = false;
+      }
       return { ...p, role };
     });
     setPlayers(next);
     const hid = humanIdRef.current;
     if (hid) {
       const others = next.filter((p) => p.id !== hid);
-      const votes = [others.find((p) => p.role === 'mafia')?.id, others.find((p) => p.role !== 'mafia')?.id].filter(Boolean) as string[];
+      const votes = [
+        others.find((p) => p.role === "mafia")?.id,
+        others.find((p) => p.role !== "mafia")?.id,
+      ].filter(Boolean) as string[];
       if (votes.length) setHumanVotes(votes);
     }
   }, [players]);
 
   const myTurn = turn && humanId && turn.agent === humanId ? turn : null;
   const me = humanId ? players.find((p) => p.id === humanId) : null;
-  const myRole = me?.role ?? 'unknown';
+  const myRole = me?.role ?? "unknown";
 
   // The scene's overlay handles target-pick actions (vote / kill / investigate /
   // protect). The bottom bar handles free-text moves: DISCUSSION speech and the
@@ -695,35 +1106,48 @@ export function useMafiaGame() {
   // Discussion bar stays mounted for the WHOLE discussion phase so you can always
   // see the input — it's only *enabled* on your turn (the engine won't accept a
   // move otherwise). `discussionTurn` is non-null exactly when it's your turn.
-  const inDiscussion = mode === 'play' && phase?.phase === 'DISCUSSION' && !!me?.alive;
-  const discussionTurn = myTurn && myTurn.phase === 'DISCUSSION' ? myTurn : null;
+  const inDiscussion =
+    mode === "play" && phase?.phase === "DISCUSSION" && !!me?.alive;
+  const discussionTurn =
+    myTurn && myTurn.phase === "DISCUSSION" ? myTurn : null;
   // The night is silent — no whisper bar. Discussion is the only free-text phase.
   const showBar = inDiscussion;
 
   // Directed public statement: if you've clicked an agent during discussion, your
   // spoken line is addressed to them (prefixed with their name) — still a normal,
   // table-visible DISCUSSION speak, not a private channel.
-  const addresseeId = inDiscussion && selected && selected !== humanId ? selected : null;
+  const addresseeId =
+    inDiscussion && selected && selected !== humanId ? selected : null;
   const addresseeName = addresseeId ? nameOf(addresseeId) : null;
   const sendSpeech = useCallback(
     (raw: string) => {
-      const text = (raw ?? '').trim();
+      const text = (raw ?? "").trim();
       if (!text) return;
       const directed =
-        addresseeName && !text.toLowerCase().startsWith(addresseeName.toLowerCase())
+        addresseeName &&
+        !text.toLowerCase().startsWith(addresseeName.toLowerCase())
           ? `${addresseeName}, ${text}`
           : text;
       // Real-time interjection: hand the line straight to the loop, which injects it
       // at the next beat boundary so the AIs react to it. The server echoes it back as
       // a speak event, so it shows in the transcript like any other line. `to` lets the
       // scheduler give the agent you addressed the floor for the next beat (direct reply).
-      postControl({ control: 'say', tool: 'speak', args: { text: directed }, to: addresseeId });
+      postControl({
+        control: "say",
+        tool: "speak",
+        args: { text: directed },
+        to: addresseeId,
+      });
     },
     [addresseeName, addresseeId, postControl],
   );
 
   // Mafia private channel — your allies + the targets they've silently picked.
-  const showMafiaChannel = mode === 'play' && myRole === 'mafia' && phase?.phase === 'NIGHT' && !!me?.alive;
+  const showMafiaChannel =
+    mode === "play" &&
+    myRole === "mafia" &&
+    phase?.phase === "NIGHT" &&
+    !!me?.alive;
   // target id → names of the Mafia who voted to kill them (for obvious scene markers)
   const killVotes = useMemo(() => {
     const m: Record<string, string[]> = {};
@@ -738,7 +1162,7 @@ export function useMafiaGame() {
   const lastSpeak = useMemo(() => {
     for (let i = feed.length - 1; i >= 0; i--) {
       const f = feed[i];
-      if (f.k === 'speak') return f;
+      if (f.k === "speak") return f;
     }
     return null;
   }, [feed]);
@@ -753,7 +1177,11 @@ export function useMafiaGame() {
   // can deliberate at once — we surface the first that isn't the current speaker.
   const firstThinking = thinkingIds.find((id) => id !== speakingId) ?? null;
   const thinkingLabel =
-    firstThinking && !speakingId && running && !winner && phase?.phase !== 'NIGHT'
+    firstThinking &&
+    !speakingId &&
+    running &&
+    !winner &&
+    phase?.phase !== "NIGHT"
       ? `${nameOf(firstThinking)} is deliberating…`
       : null;
 
@@ -764,8 +1192,20 @@ export function useMafiaGame() {
   const deadlineRef = useRef<number | null>(null);
   const expiredRef = useRef(false);
   // live values for the interval callback (avoids stale closures)
-  const timerLive = useRef({ play: false, myTurn: false, phase: '', skipTurn, requestSkipDiscussion });
-  timerLive.current = { play: mode === 'play', myTurn: !!myTurn, phase: phase?.phase ?? '', skipTurn, requestSkipDiscussion };
+  const timerLive = useRef({
+    play: false,
+    myTurn: false,
+    phase: "",
+    skipTurn,
+    requestSkipDiscussion,
+  });
+  timerLive.current = {
+    play: mode === "play",
+    myTurn: !!myTurn,
+    phase: phase?.phase ?? "",
+    skipTurn,
+    requestSkipDiscussion,
+  };
 
   // (re)start the clock on each phase change and whenever it becomes your turn,
   // so you always get the full, generous duration to act.
@@ -787,14 +1227,17 @@ export function useMafiaGame() {
     if (!running) return;
     const iv = setInterval(() => {
       if (deadlineRef.current == null) return;
-      const left = Math.max(0, Math.ceil((deadlineRef.current - Date.now()) / 1000));
+      const left = Math.max(
+        0,
+        Math.ceil((deadlineRef.current - Date.now()) / 1000),
+      );
       setSecondsLeft(left);
       if (left <= 0 && !expiredRef.current) {
         expiredRef.current = true;
         const l = timerLive.current;
         if (!l.play) return; // watch mode: the timer is purely visual
         if (l.myTurn) l.skipTurn();
-        else if (l.phase === 'DISCUSSION') {
+        else if (l.phase === "DISCUSSION") {
           setWantsSkip(true);
           l.requestSkipDiscussion(true);
         }

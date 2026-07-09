@@ -2,7 +2,7 @@
 // the action route (which receives the human's input) can rendezvous. Single
 // server process only — fine for the local demo; a real deployment would back
 // this with a shared store.
-import type { GameState } from '@/engine/types';
+import type { GameState } from "@/engine/types";
 
 export type HumanChoice = { tool: string; args: any } | null;
 
@@ -39,8 +39,35 @@ export interface GameSession {
   // in-flight, human-blind line is dropped instead of landing before their words.
   // Null whenever no interruptible AI turn is in flight (night/vote, human turn, idle).
   turnAbort?: AbortController | null;
+
+  // ── Session lifecycle / reconnect (Sweep 1) ─────────────────────────────────
+  // Aborts the whole runGame loop. Fired when the client is gone past the grace
+  // window (so we stop burning tokens with nobody watching) or when a fresh game
+  // legitimately supersedes this one.
+  abort?: AbortController;
+  // The CURRENTLY attached SSE sink — every emitted event is delivered through this.
+  // Swapped when a client reconnects; null while detached (loop keeps running, events
+  // still accrue in `log` for replay). Decoupling the loop from any single stream is
+  // what lets a refresh re-attach to the same running game.
+  send?: ((e: unknown) => void) | null;
+  // Closes the currently attached stream. Called by the loop's finally so a natural
+  // game-over closes whichever stream is attached (possibly a reconnected one).
+  closeSink?: (() => void) | null;
+  // Every event emitted so far, in order — replayed to a client that (re)connects so
+  // it rebuilds the full game state rather than starting blank.
+  log?: unknown[];
+  // Pending "abort after grace" timer, armed on disconnect and cleared on reconnect.
+  graceTimer?: ReturnType<typeof setTimeout> | null;
+  // Whether a client is currently reading the stream.
+  attached?: boolean;
+  // The last request_action event, kept so a reconnecting client can be re-offered a
+  // turn that's still parked (its copy in `log` is skipped during replay).
+  pendingActionEvent?: unknown;
 }
 
-const g = globalThis as unknown as { __mafiaSessions?: Map<string, GameSession> };
-export const sessions: Map<string, GameSession> = g.__mafiaSessions ?? new Map();
+const g = globalThis as unknown as {
+  __mafiaSessions?: Map<string, GameSession>;
+};
+export const sessions: Map<string, GameSession> =
+  g.__mafiaSessions ?? new Map();
 g.__mafiaSessions = sessions;

@@ -1,5 +1,11 @@
-import { takeTurn } from './agent';
-import type { AgentState, Emit, GameDefinition, GameState, SetupOptions } from './types';
+import { takeTurn } from "./agent";
+import type {
+  AgentState,
+  Emit,
+  GameDefinition,
+  GameState,
+  SetupOptions,
+} from "./types";
 
 // How a single agent's turn is taken. Defaults to the real AI SDK call (takeTurn),
 // but is injectable so tests can drive the loop with a deterministic mock policy
@@ -17,13 +23,20 @@ const PARALLEL_LIMIT = 8;
 
 // beatPhases / parallelPhases may be a static list or a function of state (so a game
 // can decide per-game, e.g. from its resolved config). Normalise to a list here.
-function phaseList(v: string[] | ((s: GameState) => string[]) | undefined, state: GameState): string[] {
+function phaseList(
+  v: string[] | ((s: GameState) => string[]) | undefined,
+  state: GameState,
+): string[] {
   if (!v) return [];
-  return typeof v === 'function' ? v(state) : v;
+  return typeof v === "function" ? v(state) : v;
 }
 
 // Run fn over items with at most `limit` of them in flight at once.
-async function runConcurrent<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+async function runConcurrent<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
   let i = 0;
   const n = Math.min(Math.max(1, limit), items.length || 1);
   const workers = Array.from({ length: n }, async () => {
@@ -52,6 +65,10 @@ export async function runGame(
   beatHook?: (state: GameState) => Promise<void>,
   // Optional per-game setup knobs (e.g. the lobby's chosen Mafia count).
   setupOptions?: SetupOptions,
+  // Optional abort signal so a caller (e.g. the SSE route on client disconnect) can
+  // fully terminate the loop instead of letting it keep burning tokens with nobody
+  // watching. When it fires we stop at the next safe point and return 'aborted'.
+  signal?: AbortSignal,
 ): Promise<string> {
   const state = def.setup(names, setupOptions);
   onState?.(state);
@@ -60,10 +77,13 @@ export async function runGame(
   // Safety bound so a misbehaving game can never loop forever.
   let guard = 0;
   while (def.winner(state) === null && guard++ < 100) {
-    emit({ type: 'phase', phase: state.phase, round: state.round });
+    if (signal?.aborted) break;
+    emit({ type: "phase", phase: state.phase, round: state.round });
     const phaseStart = Date.now();
     const aliveNow = state.players.filter((p) => p.alive).length;
-    console.log(`\n[phase] ══ ${state.phase} · round ${state.round} ══ (${aliveNow} alive)`);
+    console.log(
+      `\n[phase] ══ ${state.phase} · round ${state.round} ══ (${aliveNow} alive)`,
+    );
 
     const beatPhases = phaseList(def.beatPhases, state);
     const parallelPhases = phaseList(def.parallelPhases, state);
@@ -74,6 +94,7 @@ export async function runGame(
       let id: string | null;
       // nextSpeaker may be async (the optional paid "live urge" path); await covers both.
       while ((id = await def.nextSpeaker(state)) !== null) {
+        if (signal?.aborted) break;
         const agent = state.players.find((p) => p.id === id);
         if (agent && agent.alive) {
           def.onTurnStart?.(state, agent, emit);
@@ -94,7 +115,9 @@ export async function runGame(
         .map((id) => state.players.find((p) => p.id === id))
         .filter((a): a is AgentState => !!a && a.alive);
       for (const a of actors) def.onTurnStart?.(state, a, emit);
-      await runConcurrent(actors, PARALLEL_LIMIT, (agent) => turnFn(def, state, agent, emit));
+      await runConcurrent(actors, PARALLEL_LIMIT, (agent) =>
+        turnFn(def, state, agent, emit),
+      );
     } else {
       for (const id of def.turnOrder(state)) {
         const agent = state.players.find((p) => p.id === id);
@@ -107,16 +130,29 @@ export async function runGame(
       }
     }
 
-    console.log(`[phase] ${state.phase} r${state.round} turns finished in ${Date.now() - phaseStart}ms — resolving…`);
+    console.log(
+      `[phase] ${state.phase} r${state.round} turns finished in ${Date.now() - phaseStart}ms — resolving…`,
+    );
     if (def.winner(state) !== null) break;
     await def.advancePhase(state, emit); // resolve finished phase + advance; may emit deaths/reveals
   }
 
-  const winner = def.winner(state) ?? 'draw';
+  // Aborted (client gone / superseded): stop without declaring a winner — this game
+  // didn't legitimately end, so we don't emit a 'win' or unmask the roster.
+  if (signal?.aborted && def.winner(state) === null) {
+    state.winner = "aborted";
+    return "aborted";
+  }
+
+  const winner = def.winner(state) ?? "draw";
   state.winner = winner;
   // Unmask every seat with the result — the game is over, so hidden roles become
   // public for the endgame reveal. This is the one place the full role map is allowed
   // onto the wire (the play-mode filter hides roles right up until this moment).
-  emit({ type: 'win', winner, roles: state.players.map((p) => ({ id: p.id, role: p.role })) });
+  emit({
+    type: "win",
+    winner,
+    roles: state.players.map((p) => ({ id: p.id, role: p.role })),
+  });
   return winner;
 }
