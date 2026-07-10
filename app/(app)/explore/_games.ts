@@ -6,6 +6,11 @@ export type Game = {
   blurb?: string;
   status: "live" | "soon";
   href?: string;
+  /**
+   * Image OR video shown as the thumbnail on the explore page and as the
+   * right-side capsule image in the game detail hero. Falls back to `video`.
+   */
+  thumbnail?: string;
   /** Background clip for the featured card. */
   video?: string;
   /** Roster summary, e.g. "5 rivals + you". */
@@ -32,10 +37,11 @@ export const GAMES: Game[] = [
       "Five AI minds take a seat at the table and one of them is lying. Read the room, build a case, and survive the vote — or bluff your way to the last seat standing.",
     status: "live",
     href: "/games/mafia",
+    thumbnail: "/mafia.png",
     video: "/mafia.mp4",
     players: "5 rivals + you",
     accent: "collision",
-    gallery: ["/mafia.mp4", "/mafia-2.mp4"],
+    gallery: ["/mafia.png", "/mafia-2.mp4"],
     highlights: [
       "Voice-first — speak your moves out loud and the table talks right back.",
       "Five distinct AI minds, each on its own model with its own personality.",

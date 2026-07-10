@@ -135,6 +135,7 @@ function MafiaGame() {
     speakingId,
     thinkingIds,
     findings,
+    investigation,
     teammates,
     protectedId,
     killVotesByAgent,
@@ -669,6 +670,36 @@ function MafiaGame() {
       {/* night narrator — calls the roles to "wake up" in sequence */}
       {running && phase?.phase === "NIGHT" && (
         <NightNarration wake={nightWake} myRole={myRole} />
+      )}
+
+      {/* detective result — pops the INSTANT your investigation lands, so you learn it
+          mid-night over the blackout instead of waiting for the lights in discussion. */}
+      {investigation && running && phase?.phase === "NIGHT" && (
+        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center">
+          <div
+            className="rounded-2xl border px-9 py-6 text-center shadow-2xl backdrop-blur-md"
+            style={{
+              borderColor:
+                investigation.result === "mafia"
+                  ? "rgba(224,69,79,0.5)"
+                  : "rgba(45,212,191,0.5)",
+              background: "rgba(10,11,15,0.82)",
+            }}
+          >
+            <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-white/45">
+              🔎 Your investigation
+            </p>
+            <p className="mt-3 font-display text-2xl font-bold text-white">
+              {nameOf(investigation.target)}
+            </p>
+            <p
+              className="mt-1 font-display text-3xl font-black tracking-tight"
+              style={{ color: investigation.result === "mafia" ? "#ff5964" : "#2dd4bf" }}
+            >
+              {investigation.result === "mafia" ? "IS MAFIA" : "IS NOT MAFIA"}
+            </p>
+          </div>
+        </div>
       )}
 
       {/* dramatic outcome announcement: death (red), doctor-save (teal), quiet (slate) */}

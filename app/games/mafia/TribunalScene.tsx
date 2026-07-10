@@ -21,6 +21,7 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -626,11 +627,24 @@ export default function TribunalScene(props: Props) {
     const width = mount.clientWidth || window.innerWidth;
     const height = mount.clientHeight || window.innerHeight;
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // ── device performance tier → keep weaker machines smooth (Sweep 16) ──
+    const perfTier: 'low' | 'med' | 'high' = (() => {
+      const nav = navigator as Navigator & { deviceMemory?: number };
+      const mem = nav.deviceMemory ?? 4;
+      const cores = navigator.hardwareConcurrency ?? 4;
+      const mobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (mobile || mem <= 2 || cores <= 2) return 'low';
+      if (mem <= 4 || cores <= 4) return 'med';
+      return 'high';
+    })();
+    const maxDPR = perfTier === 'low' ? 1 : perfTier === 'med' ? 1.5 : 2;
+    const shadowSize = perfTier === 'low' ? 1024 : 2048;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: perfTier !== 'low' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxDPR));
     renderer.setSize(width, height);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = perfTier === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 0.95;
     mount.appendChild(renderer.domElement);
@@ -655,7 +669,7 @@ export default function TribunalScene(props: Props) {
     const lamp = new THREE.SpotLight(0xffe2b0, 150, 26, Math.PI / 5.5, 0.5, 1.6);
     lamp.position.set(0, 8.5, 0);
     lamp.castShadow = true;
-    lamp.shadow.mapSize.set(2048, 2048);
+    lamp.shadow.mapSize.set(shadowSize, shadowSize);
     lamp.shadow.bias = -0.0004;
     scene.add(lamp, lamp.target);
     const rim = new THREE.DirectionalLight(0x4060ff, 0.5);
@@ -768,6 +782,36 @@ export default function TribunalScene(props: Props) {
     // gently (low strength), so the scene reads crisp instead of washed-out.
     const bloom = new UnrealBloomPass(new THREE.Vector2(width, height), 0.3, 0.5, 0.85);
     composer.addPass(bloom);
+
+    // Cinematic grade: a soft contrast curve, a vignette that tightens during the vote
+    // reveal / endgame (a cheap depth-of-field "focus pull"), and gently animated film
+    // grain — atmosphere the raw render lacks (Sweep 15).
+    const gradePass = new ShaderPass({
+      uniforms: {
+        tDiffuse: { value: null },
+        uTime: { value: 0 },
+        uVignette: { value: 0.32 },
+        uGrain: { value: 0.05 },
+        uResolution: { value: new THREE.Vector2(width, height) },
+      },
+      vertexShader:
+        'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `
+        uniform sampler2D tDiffuse; uniform float uTime; uniform float uVignette; uniform float uGrain; uniform vec2 uResolution; varying vec2 vUv;
+        float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        void main(){
+          vec4 col = texture2D(tDiffuse, vUv);
+          col.rgb = mix(col.rgb, col.rgb * col.rgb * (3.0 - 2.0 * col.rgb), 0.1);
+          float d = distance(vUv, vec2(0.5));
+          float vig = smoothstep(0.85, 0.35, d);
+          col.rgb *= 1.0 - uVignette * (1.0 - vig);
+          float g = hash(vUv * uResolution + fract(uTime)) - 0.5;
+          col.rgb += g * uGrain;
+          gl_FragColor = col;
+        }
+      `,
+    });
+    composer.addPass(gradePass);
     composer.addPass(new OutputPass());
 
     // Free orbit/zoom/pan camera — used ONLY in watch mode (spectator). In play
@@ -1139,20 +1183,29 @@ export default function TribunalScene(props: Props) {
     // mode), so dragging to look around never accidentally selects/deselects.
     let downX = 0;
     let downY = 0;
+    // Last time the user touched the scene → lets the loop drop to an idle frame-rate
+    // when nothing's happening and no one's looking around (Sweep 16).
+    let lastInteract = performance.now();
     function onPointerDown(e: PointerEvent) {
       downX = e.clientX;
       downY = e.clientY;
+      lastInteract = performance.now();
     }
     function onPointerUp(e: PointerEvent) {
       if (Math.hypot(e.clientX - downX, e.clientY - downY) <= 6) selectAt(e);
     }
+    const onWheel = () => {
+      lastInteract = performance.now();
+    };
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('wheel', onWheel, { passive: true });
 
     // mouse free-look — turns your head by moving the look TARGET (never the camera
     // position, which would mirror the world). Not inverted.
     const par = new THREE.Vector2(0, 0);
     function onPointerMove(e: PointerEvent) {
+      lastInteract = performance.now();
       const rect = renderer.domElement.getBoundingClientRect();
       par.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       par.y = ((e.clientY - rect.top) / rect.height) * 2 - 1;
@@ -1238,10 +1291,22 @@ export default function TribunalScene(props: Props) {
     const _cQuat = new THREE.Quaternion();
     const smooth01 = (x: number) => { const c = x < 0 ? 0 : x > 1 ? 1 : x; return c * c * (3 - 2 * c); };
 
-    function animate() {
+    let lastRender = 0; // timestamp of the last painted frame (idle throttle)
+    function animate(now?: number) {
       raf = requestAnimationFrame(animate);
-      t += 0.0015;
       const p = live.current;
+      // ── idle frame-rate throttle (Sweep 16): when nothing's moving and no one's
+      // interacting, drop to ~30fps to spare the GPU/battery; snap back to full rate the
+      // instant something happens (a line, a turn, a cutscene, a burst, a look-around). ──
+      const ts = now ?? performance.now();
+      const busy =
+        !!(p.speakingId || p.turn || p.gameOver || p.revealFocusId || p.focusPaper) ||
+        bursts.length > 0 ||
+        t < transUntil ||
+        ts - lastInteract < 1500;
+      if (!busy && ts - lastRender < 33) return;
+      lastRender = ts;
+      t += 0.0015;
       const isSpectator = p.myId == null;
       const awake = isSpectator || p.myRole === 'mafia' || !!p.turn;
       const v = viewTarget(p.phase, p.myRole, awake);
@@ -1336,6 +1401,10 @@ export default function TribunalScene(props: Props) {
       ambient.intensity += (v.ambI - ambient.intensity) * 0.06;
       lamp.color.lerp(cLamp.set(v.lamp), 0.06);
       lamp.intensity += (v.lampI - lamp.intensity) * 0.06;
+      // lamps flicker faintly at night for unease (skipped once the lamp is basically off)
+      if (p.phase === 'NIGHT' && lamp.intensity > 6) {
+        lamp.intensity *= 1 + (Math.sin(t * 41) + Math.sin(t * 17.3)) * 0.012;
+      }
       rim.color.lerp(cRim.set(v.rim), 0.06);
       rim.intensity += (v.rimI - rim.intensity) * 0.06;
       bloom.strength += (v.bloom - bloom.strength) * 0.06;
@@ -1379,6 +1448,16 @@ export default function TribunalScene(props: Props) {
       // ── Stage 4: current speaker's public expression → pose + gaze ──
       const speakerEmotion = p.speakerEmotion ?? 'neutral';
       const speakerK = Math.max(0, Math.min(1, p.speakerIntensity ?? 0));
+      // Push in during heated moments: narrow the FOV a touch when the current speaker is
+      // intense (an accusation lands closer), and ease back when calm or in a cutscene.
+      {
+        const inCutscene = !!(p.gameOver || p.revealFocusId || p.focusPaper);
+        const fovTarget = !inCutscene && p.phase === 'DISCUSSION' ? 72 - speakerK * 5 : 72;
+        if (Math.abs(camera.fov - fovTarget) > 0.02) {
+          camera.fov += (fovTarget - camera.fov) * 0.05;
+          camera.updateProjectionMatrix();
+        }
+      }
       const pose = EMOTION_POSE[speakerEmotion] ?? EMOTION_POSE.neutral;
       const gest = EMOTION_GESTURE[speakerEmotion] ?? EMOTION_GESTURE.neutral;
       const lookId = p.lookingAtId ?? null;
@@ -1772,6 +1851,12 @@ export default function TribunalScene(props: Props) {
       }
       dustGeo.attributes.position.needsUpdate = true;
 
+      // cinematic grade: animate the grain, and tighten the vignette during the reveal /
+      // endgame so the eye is pulled to the focal beat (a cheap depth-of-field feel).
+      gradePass.uniforms.uTime.value = t;
+      const vigTarget = p.gameOver || p.revealFocusId ? 0.55 : p.focusPaper ? 0.46 : 0.32;
+      gradePass.uniforms.uVignette.value += (vigTarget - gradePass.uniforms.uVignette.value) * 0.05;
+
       composer.render();
     }
     animate();
@@ -1784,6 +1869,7 @@ export default function TribunalScene(props: Props) {
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
       composer.setSize(w, h);
+      gradePass.uniforms.uResolution.value.set(w, h);
     }
     window.addEventListener('resize', onResize);
     const ro = new ResizeObserver(onResize);
@@ -1797,6 +1883,7 @@ export default function TribunalScene(props: Props) {
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('wheel', onWheel);
       controls.dispose();
       apiRef.current = null;
       clearFigures();

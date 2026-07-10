@@ -50,32 +50,79 @@ function GameDetail({ g }: { g: Game }) {
         ← Explore
       </Link>
 
-      {/* ── cinematic hero: media with the title laid over it ── */}
-      <div className="fade-up relative mt-6 overflow-hidden rounded-xl border border-[var(--hairline)]">
-        <div className="aspect-[16/10] w-full sm:aspect-[21/9]">
-          {active ? (
-            <Media
-              key={active}
-              src={active}
-              className="h-full w-full object-cover"
-              big
-            />
-          ) : (
-            <div
-              className="h-full w-full"
-              style={{
-                background:
-                  "linear-gradient(135deg, var(--stage-raised), var(--stage))",
-              }}
-            />
+      {/* ── hero: big media showcase on the left, capsule + brief on the right ── */}
+      <div className="fade-up mt-6 grid gap-6 lg:grid-cols-12">
+        {/* left — the showcase, taking up the majority of the space */}
+        <div className="lg:col-span-8">
+          <div className="overflow-hidden rounded-xl border border-[var(--hairline)]">
+            <div className="aspect-video w-full">
+              {active ? (
+                <Media
+                  key={active}
+                  src={active}
+                  className="h-full w-full object-cover"
+                  big
+                />
+              ) : (
+                <div
+                  className="h-full w-full"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, var(--stage-raised), var(--stage))",
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          {gallery.length > 1 && (
+            <div className="mt-3 flex flex-wrap gap-2.5">
+              {gallery.map((src) => {
+                const on = src === active;
+                return (
+                  <button
+                    key={src}
+                    type="button"
+                    onClick={() => setActive(src)}
+                    aria-label="Show media"
+                    aria-pressed={on}
+                    className={`h-14 w-24 overflow-hidden rounded transition ${
+                      on
+                        ? "ring-1 ring-white/70"
+                        : "opacity-45 hover:opacity-80"
+                    }`}
+                  >
+                    <Media src={src} className="h-full w-full object-cover" />
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
-        {/* legibility scrims */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-stage via-stage/45 to-transparent" />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-stage/70 via-transparent to-transparent" />
 
-        <div className="absolute inset-x-0 bottom-0 p-6 sm:p-10">
-          <div className="flex items-center gap-2.5">
+        {/* right — capsule art, brief description, and the facts */}
+        <aside className="flex flex-col lg:col-span-4">
+          <div className="overflow-hidden rounded-xl border border-[var(--hairline)]">
+            <div className="aspect-video w-full">
+              {(g.thumbnail ?? gallery[0]) ? (
+                <Media
+                  src={(g.thumbnail ?? gallery[0]) as string}
+                  className="h-full w-full object-cover"
+                  big
+                />
+              ) : (
+                <div
+                  className="h-full w-full"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, var(--stage-raised), var(--stage))",
+                  }}
+                />
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4 flex items-center gap-2.5">
             <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-white/50">
               {live ? "Live" : "In development"}
             </p>
@@ -83,131 +130,125 @@ function GameDetail({ g }: { g: Game }) {
               Beta
             </span>
           </div>
-          <h1 className="mt-2 font-display text-5xl font-bold tracking-tight text-white sm:text-6xl">
+          <h1 className="mt-2 font-display text-3xl font-bold tracking-tight text-white sm:text-4xl">
             {g.title}
           </h1>
-          <p className="mt-3 max-w-md text-sm leading-relaxed text-white/70 sm:text-base">
+          <p className="mt-3 text-sm leading-relaxed text-white/70">
             {g.tagline}
           </p>
-        </div>
-      </div>
 
-      {/* ── action row: play + the media strip ── */}
-      <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-4">
-        {live && g.href ? (
-          <button
-            type="button"
-            onClick={play}
-            disabled={busy}
-            className="inline-flex items-center rounded-md bg-white px-7 py-3 text-sm font-semibold text-stage transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-70"
-          >
-            {busy ? "Signing in…" : canPlay ? "Play now" : "Log in to play"}
-          </button>
-        ) : (
-          <span className="inline-flex cursor-default items-center rounded-md border border-[var(--hairline)] px-7 py-3 text-sm font-semibold text-white/40">
-            Coming soon
-          </span>
-        )}
-
-        {g.players && (
-          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-white/35">
-            {g.players}
-          </span>
-        )}
-
-        {gallery.length > 1 && (
-          <div className="ml-auto flex gap-2.5">
-            {gallery.map((src) => {
-              const on = src === active;
-              return (
-                <button
-                  key={src}
-                  type="button"
-                  onClick={() => setActive(src)}
-                  aria-label="Show media"
-                  aria-pressed={on}
-                  className={`h-11 w-20 overflow-hidden rounded transition ${
-                    on ? "ring-1 ring-white/70" : "opacity-45 hover:opacity-80"
-                  }`}
+          {g.specs && g.specs.length > 0 && (
+            <dl className="mt-5 space-y-2.5 border-t border-[var(--hairline)] pt-4">
+              {g.specs.map((s) => (
+                <div
+                  key={s.label}
+                  className="flex items-baseline gap-3 text-sm"
                 >
-                  <Media src={src} className="h-full w-full object-cover" />
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* ── body: asymmetric two columns, split by a hairline rail ── */}
-      <div className="mt-16 grid gap-x-12 gap-y-12 lg:grid-cols-12">
-        {/* left — the read */}
-        <div className="lg:col-span-7">
-          <p className="text-lg leading-relaxed text-white/75">
-            {g.blurb ?? g.tagline}
-          </p>
-
-          {g.howItPlays && g.howItPlays.length > 0 && (
-            <section className="mt-14">
-              <Label>How it plays</Label>
-              <div className="mt-7 space-y-9">
-                {g.howItPlays.map((step, i) => (
-                  <div key={step.title} className="flex gap-5">
-                    <span className="font-display text-3xl font-bold leading-none tabular-nums text-white/15">
-                      {String(i + 1).padStart(2, "0")}
-                    </span>
-                    <div className="pt-0.5">
-                      <p className="font-medium text-white">{step.title}</p>
-                      <p className="mt-1.5 max-w-md text-sm leading-relaxed text-white/55">
-                        {step.body}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+                  <dt className="w-24 shrink-0 font-mono text-[11px] uppercase tracking-[0.16em] text-white/35">
+                    {s.label}
+                  </dt>
+                  <dd className="text-white/80">{s.value}</dd>
+                </div>
+              ))}
+            </dl>
           )}
-        </div>
 
-        {/* right — the facts, set off by a rule */}
-        <aside className="lg:col-span-5 lg:border-l lg:border-[var(--hairline)] lg:pl-12">
-          <div className="space-y-12">
-            {g.specs && g.specs.length > 0 && (
-              <div>
-                <Label>Details</Label>
-                <dl className="mt-4 divide-y divide-[var(--hairline)]">
-                  {g.specs.map((s) => (
-                    <div
-                      key={s.label}
-                      className="flex items-baseline justify-between gap-4 py-3"
-                    >
-                      <dt className="text-sm text-white/40">{s.label}</dt>
-                      <dd className="text-right text-sm text-white/80">
-                        {s.value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </div>
-            )}
-
-            {g.highlights && g.highlights.length > 0 && (
-              <div>
-                <Label>What&apos;s inside</Label>
-                <ul className="mt-4 divide-y divide-[var(--hairline)]">
-                  {g.highlights.map((h) => (
-                    <li
-                      key={h}
-                      className="py-3 text-sm leading-relaxed text-white/60"
-                    >
-                      {h}
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          <div className="mt-6">
+            {live && g.href ? (
+              <button
+                type="button"
+                onClick={play}
+                disabled={busy}
+                className="inline-flex w-full items-center justify-center rounded-md bg-white px-7 py-3 text-sm font-semibold text-stage transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-70"
+              >
+                {busy ? "Signing in…" : canPlay ? "Play now" : "Log in to play"}
+              </button>
+            ) : (
+              <span className="inline-flex w-full cursor-default items-center justify-center rounded-md border border-[var(--hairline)] px-7 py-3 text-sm font-semibold text-white/40">
+                Coming soon
+              </span>
             )}
           </div>
         </aside>
       </div>
+
+      {/* ── About this game: a fuller read below the brief hero blurb ── */}
+      <section className="fade-up mt-20">
+        <h2 className="border-b border-[var(--hairline)] pb-4 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">
+          About this game
+        </h2>
+
+        <div className="mt-10 grid gap-x-12 gap-y-14 lg:grid-cols-12">
+          {/* left — the read, with illustrations woven in */}
+          <div className="lg:col-span-7">
+            <p className="text-lg leading-relaxed text-white/80">
+              {g.blurb ?? g.tagline}
+            </p>
+
+            {gallery.length > 1 && (
+              <figure className="mt-10 overflow-hidden rounded-xl border border-[var(--hairline)]">
+                <Media
+                  src={gallery[1]}
+                  className="aspect-video w-full object-cover"
+                  big
+                />
+              </figure>
+            )}
+
+            {g.howItPlays && g.howItPlays.length > 0 && (
+              <div className="mt-14">
+                <Label>How it plays</Label>
+                <div className="mt-7 space-y-9">
+                  {g.howItPlays.map((step, i) => (
+                    <div key={step.title} className="flex gap-5">
+                      <span className="font-display text-3xl font-bold leading-none tabular-nums text-white/15">
+                        {String(i + 1).padStart(2, "0")}
+                      </span>
+                      <div className="pt-0.5">
+                        <p className="font-medium text-white">{step.title}</p>
+                        <p className="mt-1.5 max-w-md text-sm leading-relaxed text-white/55">
+                          {step.body}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {gallery.length > 2 && (
+              <figure className="mt-12 overflow-hidden rounded-xl border border-[var(--hairline)]">
+                <Media
+                  src={gallery[2]}
+                  className="aspect-video w-full object-cover"
+                  big
+                />
+              </figure>
+            )}
+          </div>
+
+          {/* right — the facts, set off by a rule */}
+          <aside className="lg:col-span-5 lg:border-l lg:border-[var(--hairline)] lg:pl-12">
+            <div className="space-y-12">
+              {g.highlights && g.highlights.length > 0 && (
+                <div>
+                  <Label>What&apos;s inside</Label>
+                  <ul className="mt-4 divide-y divide-[var(--hairline)]">
+                    {g.highlights.map((h) => (
+                      <li
+                        key={h}
+                        className="py-3 text-sm leading-relaxed text-white/60"
+                      >
+                        {h}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </aside>
+        </div>
+      </section>
     </main>
   );
 }

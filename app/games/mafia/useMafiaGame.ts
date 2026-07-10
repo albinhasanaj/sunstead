@@ -84,6 +84,12 @@ export function useMafiaGame() {
   const [findings, setFindings] = useState<Record<string, "mafia" | "town">>(
     {},
   ); // detective results
+  // The latest detective investigation result, surfaced the INSTANT it arrives so you
+  // see it during the night (not only once the lights come up in discussion).
+  const [investigation, setInvestigation] = useState<{
+    target: string;
+    result: "mafia" | "town";
+  } | null>(null);
   const [teammates, setTeammates] = useState<string[]>([]); // your Mafia allies' ids
   const [protectedId, setProtectedId] = useState<string | null>(null); // who you (doctor) shielded
   const [killVotesByAgent, setKillVotesByAgent] = useState<
@@ -426,6 +432,7 @@ export function useMafiaGame() {
           setKillVotesByAgent({}); // kill votes are per-night; reset each phase change
           setCommittedVoters([]); // fresh slate of vote checkmarks each phase
           setMyConfirmedVote(null);
+          setInvestigation(null); // clear last night's result card at each phase turn
           const night = e.phase === "NIGHT";
           setNightWake(null); // reset the narrator each phase; 'wake' events drive it at night
           if (musicRef.current) musicRef.current.volume = night ? 0.07 : 0.13;
@@ -650,12 +657,14 @@ export function useMafiaGame() {
             ...f,
             { k: "knowledge", who: e.agent, text: e.text },
           ]);
-          // A detective finding about a specific player → mark them in the scene.
-          if (e.target)
-            setFindings((m) => ({
-              ...m,
-              [e.target]: e.result === "MAFIA" ? "mafia" : "town",
-            }));
+          // A detective finding about a specific player → mark them in the scene AND
+          // pop an immediate result card so you learn it right away, mid-night.
+          if (e.target) {
+            const res = e.result === "MAFIA" ? "mafia" : "town";
+            setFindings((m) => ({ ...m, [e.target]: res }));
+            if (!replayingRef.current)
+              setInvestigation({ target: e.target, result: res });
+          }
           break;
         case "request_action": {
           const t = e as Turn;
@@ -821,6 +830,7 @@ export function useMafiaGame() {
     setNightWake(null);
     if (speakTimerRef.current) clearTimeout(speakTimerRef.current);
     setFindings({});
+    setInvestigation(null);
     setTeammates([]);
     setProtectedId(null);
     setKillVotesByAgent({});
@@ -1421,6 +1431,7 @@ export function useMafiaGame() {
     voiceIdle,
     thinkingIds,
     findings,
+    investigation,
     teammates,
     protectedId,
     killVotesByAgent,

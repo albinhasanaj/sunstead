@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { GAMES, type Game } from "./_games";
 
+const isVideo = (src: string) => /\.(mp4|webm|mov)$/i.test(src);
+
 export default function ExplorePage() {
   const live = GAMES.filter((g) => g.status === "live");
 
@@ -86,18 +88,27 @@ function FeaturedCard({ g }: { g: Game }) {
       aria-label={`View ${g.title}`}
     >
       <article className="surface lift group relative h-[420px] overflow-hidden !rounded-3xl sm:h-[460px]">
-        {/* moving thumbnail */}
-        {g.video && (
-          <video
-            src={g.video}
-            autoPlay
-            muted
-            loop
-            playsInline
-            preload="metadata"
-            className="absolute inset-0 h-full w-full object-cover opacity-55 transition-all duration-700 group-hover:scale-[1.04] group-hover:opacity-70"
-          />
-        )}
+        {/* moving thumbnail — an image or a video */}
+        {(() => {
+          const src = g.thumbnail ?? g.video;
+          if (!src) return null;
+          const cls =
+            "absolute inset-0 h-full w-full object-cover opacity-55 transition-all duration-700 group-hover:scale-[1.04] group-hover:opacity-70";
+          return isVideo(src) ? (
+            <video
+              src={src}
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              className={cls}
+            />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={src} alt="" className={cls} />
+          );
+        })()}
         {/* legibility scrims */}
         <div className="absolute inset-0 bg-gradient-to-t from-stage via-stage/55 to-stage/10" />
         <div className="absolute inset-0 bg-gradient-to-r from-stage/85 via-transparent to-transparent" />
