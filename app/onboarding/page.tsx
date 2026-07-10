@@ -28,19 +28,24 @@ export default function OnboardingPage() {
         <div className="mb-2 flex items-center gap-2.5">
           <span
             className="block h-3 w-3 rotate-45"
-            style={{ background: "linear-gradient(135deg, var(--human-1), var(--ai-1))" }}
+            style={{
+              background:
+                "linear-gradient(135deg, var(--human-1), var(--ai-1))",
+            }}
           />
-          <span className="font-display text-lg font-bold tracking-tight">Adversary</span>
+          <span className="font-display text-lg font-bold tracking-tight">
+            Adversary
+          </span>
         </div>
         <h1 className="mt-8 font-display text-4xl font-bold leading-tight sm:text-5xl">
           Set up your seat at the table.
         </h1>
         <p className="mt-3 text-muted">
-          Signed in as <span className="text-foreground">{user?.email}</span>. One screen and
-          you&apos;re in.
+          Signed in as <span className="text-foreground">{user?.email}</span>.
+          One screen and you&apos;re in.
         </p>
 
-        <div className="mt-10 rounded-3xl border border-[var(--hairline)] bg-stage-raised p-6 sm:p-8">
+        <div className="surface mt-10 !rounded-3xl p-6 sm:p-8">
           <ProfileForm
             defaultName={user?.name ?? ""}
             submitLabel="Enter the arena"

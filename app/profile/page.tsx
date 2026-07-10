@@ -8,7 +8,8 @@ import { Avatar } from "../_components/Avatar";
 import { ProfileForm } from "../_components/ProfileForm";
 
 export default function ProfilePage() {
-  const { ready, signedIn, hasProfile, profile, user, saveProfile, signOut } = useAuth();
+  const { ready, signedIn, hasProfile, profile, user, saveProfile, signOut } =
+    useAuth();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
 
@@ -36,9 +37,14 @@ export default function ProfilePage() {
           <Link href="/explore" className="flex items-center gap-2.5">
             <span
               className="h-3 w-3 rotate-45"
-              style={{ background: "linear-gradient(135deg, var(--human-1), var(--ai-1))" }}
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--human-1), var(--ai-1))",
+              }}
             />
-            <span className="font-display text-lg font-bold tracking-tight">Adversary</span>
+            <span className="font-display text-lg font-bold tracking-tight">
+              Adversary
+            </span>
           </Link>
           <Link
             href="/explore"
@@ -50,9 +56,11 @@ export default function ProfilePage() {
       </header>
 
       <main className="mx-auto w-full max-w-xl flex-1 px-5 py-12 sm:px-8">
-        <h1 className="font-display text-4xl font-bold tracking-tight">Your seat</h1>
+        <h1 className="font-display text-4xl font-bold tracking-tight">
+          Your seat
+        </h1>
 
-        <div className="mt-8 rounded-3xl border border-[var(--hairline)] bg-stage-raised p-6 sm:p-8">
+        <div className="surface mt-8 !rounded-3xl p-6 sm:p-8">
           {editing ? (
             <ProfileForm
               initial={profile}
@@ -68,10 +76,14 @@ export default function ProfilePage() {
               <div className="flex items-center gap-5">
                 <Avatar profile={profile} size="lg" />
                 <div className="min-w-0">
-                  <p className="font-display text-3xl font-bold">{profile.displayName}</p>
+                  <p className="font-display text-3xl font-bold">
+                    {profile.displayName}
+                  </p>
                   <p className="truncate text-sm text-muted">{user?.email}</p>
                   {profile.tagline && (
-                    <p className="mt-1 text-sm italic text-muted">&ldquo;{profile.tagline}&rdquo;</p>
+                    <p className="mt-1 text-sm italic text-muted">
+                      &ldquo;{profile.tagline}&rdquo;
+                    </p>
                   )}
                 </div>
               </div>

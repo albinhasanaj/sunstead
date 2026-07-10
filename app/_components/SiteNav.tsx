@@ -74,10 +74,24 @@ export function SiteNav() {
       >
         <Link
           href="/"
-          className="text-sm font-bold uppercase tracking-tight text-foreground"
+          className="flex items-center gap-2.5 text-foreground"
           aria-label="Adversary home"
         >
-Adversary        </Link>
+          <span
+            aria-hidden
+            className="h-3 w-3 rotate-45"
+            style={{
+              background:
+                "linear-gradient(135deg, var(--human-1), var(--ai-1))",
+            }}
+          />
+          <span className="font-display text-sm font-bold uppercase tracking-tight">
+            Adversary
+          </span>
+          <span className="rounded border border-[var(--hairline)] px-1.5 py-0.5 font-mono text-[9px] font-medium uppercase tracking-[0.18em] text-white/50">
+            Beta
+          </span>
+        </Link>
 
         <div className="flex items-center gap-12 sm:gap-8">
           {LINKS.map((l) => (

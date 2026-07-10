@@ -6,9 +6,16 @@ export function SiteFooter() {
       <div className="mx-auto flex max-w-6xl flex-col gap-10 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-sm">
           <div className="flex items-center gap-2.5">
-            <span className="block h-2.5 w-2.5 rotate-45 bg-[var(--amber)]" />
+            <span
+              aria-hidden
+              className="block h-2.5 w-2.5 rotate-45"
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--human-1), var(--ai-1))",
+              }}
+            />
             <span className="font-mono text-sm font-medium uppercase tracking-[0.32em]">
-              Collusion
+              Adversary
             </span>
           </div>
           <p className="mt-4 font-display text-lg italic leading-snug text-neutral-400">
@@ -22,7 +29,10 @@ export function SiteFooter() {
             <Link href="/explore" className="transition hover:text-foreground">
               Explore
             </Link>
-            <Link href="/games/mafia" className="transition hover:text-foreground">
+            <Link
+              href="/games/mafia"
+              className="transition hover:text-foreground"
+            >
               Mafia
             </Link>
           </div>
@@ -37,7 +47,7 @@ export function SiteFooter() {
       </div>
 
       <div className="mx-auto mt-12 flex max-w-6xl flex-col gap-2 border-t border-white/[0.06] pt-6 font-mono text-[10px] uppercase tracking-[0.18em] text-neutral-600 sm:flex-row sm:items-center sm:justify-between">
-        <span>© {new Date().getFullYear()} Collusion</span>
+        <span>© {new Date().getFullYear()} Adversary</span>
         <span>Built with Next.js · Vercel AI SDK</span>
       </div>
     </footer>
