@@ -1,6 +1,6 @@
 import { GoogleButton } from "./_components/GoogleButton";
 import { LazyVideo } from "./_components/LazyVideo";
-import { SiteNav } from "./_components/SiteNav";
+import { AppHeader } from "./_components/AppHeader";
 
 // The two clips play side by side, muted-autoplaying and looping.
 const VIDEOS: { id: string; label: string; src: string }[] = [
@@ -30,7 +30,7 @@ const CARDS: { title: string; body: string }[] = [
 export default function Landing() {
   return (
     <div className="relative flex min-h-screen flex-col overflow-x-clip bg-black text-foreground">
-      <SiteNav />
+      <AppHeader />
 
       {/* ── HERO ──────────────────────────────────────────────── */}
       <section className="relative flex min-h-[92vh] flex-col items-center justify-center overflow-hidden bg-black px-5 py-24 text-center sm:px-8">
@@ -50,12 +50,18 @@ export default function Landing() {
           <span className="text-[clamp(2.25rem,9.5vw,6.75rem)] tracking-tight">
             The New Age Of
           </span>
-          <span id="hero-gaming" className="text-[clamp(4.5rem,19vw,13.5rem)] tracking-tight">
+          <span
+            id="hero-gaming"
+            className="text-[clamp(4.5rem,19vw,13.5rem)] tracking-tight"
+          >
             Gaming
           </span>
         </h1>
 
-        <div className="fade-up relative mt-10 cursor-pointer" style={{ animationDelay: "120ms" }}>
+        <div
+          className="fade-up relative mt-10 cursor-pointer"
+          style={{ animationDelay: "120ms" }}
+        >
           <GoogleButton variant="plain" label="Start Playing" />
         </div>
       </section>
@@ -135,7 +141,9 @@ export default function Landing() {
                     <h3 className="relative font-display text-2xl font-bold text-white">
                       {c.title}
                     </h3>
-                    <p className="relative mt-3 text-sm leading-relaxed text-white/80">{c.body}</p>
+                    <p className="relative mt-3 text-sm leading-relaxed text-white/80">
+                      {c.body}
+                    </p>
                   </article>
                 </li>
               ))}
@@ -172,9 +180,14 @@ export default function Landing() {
           <div className="flex items-center gap-2.5">
             <span
               className="h-3 w-3 rotate-45"
-              style={{ background: "linear-gradient(135deg, var(--human-1), var(--ai-1))" }}
+              style={{
+                background:
+                  "linear-gradient(135deg, var(--human-1), var(--ai-1))",
+              }}
             />
-            <span className="font-display text-base font-bold tracking-tight">Adversary</span>
+            <span className="font-display text-base font-bold tracking-tight">
+              Adversary
+            </span>
           </div>
           <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
             © {new Date().getFullYear()} Adversary · Outtalk the machines

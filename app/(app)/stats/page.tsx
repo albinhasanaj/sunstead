@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "../../_components/AuthProvider";
+import { SignInGate } from "../../_components/SignInGate";
 
 const RECORD: [string, string][] = [
   ["Played", "0"],
@@ -12,7 +13,24 @@ const RECORD: [string, string][] = [
 const LEADERBOARD: { rank: number; name: string; wins: number }[] = [];
 
 export default function StatsPage() {
-  const { profile } = useAuth();
+  const { ready, signedIn, hasProfile, profile } = useAuth();
+
+  // Stats are personal — you need an account to see them.
+  if (!ready) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center">
+        <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/15 border-t-white" />
+      </div>
+    );
+  }
+  if (!signedIn || !hasProfile) {
+    return (
+      <SignInGate
+        title="Log in to see your stats"
+        subtitle="Track your games, wins, and where you rank once you're signed in."
+      />
+    );
+  }
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-5 py-12 sm:px-8 sm:py-16">

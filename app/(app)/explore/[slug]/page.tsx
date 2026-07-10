@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 import { GAMES, type Game } from "../_games";
+import { useAuth } from "../../../_components/AuthProvider";
 
 const isVideo = (src: string) => /\.(mp4|webm|mov)$/i.test(src);
 
@@ -21,6 +22,24 @@ function GameDetail({ g }: { g: Game }) {
   const live = g.status === "live";
   const gallery = g.gallery ?? (g.video ? [g.video] : []);
   const [active, setActive] = useState(gallery[0] ?? null);
+
+  // Anyone can read the page; actually playing needs an account. When signed out the
+  // button becomes a one-click "Log in to play".
+  const { signedIn, hasProfile, signInWithGoogle } = useAuth();
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const canPlay = signedIn && hasProfile;
+  const play = () => {
+    if (!g.href || busy) return;
+    if (canPlay) {
+      router.push(g.href);
+      return;
+    }
+    setBusy(true);
+    if (!signedIn) signInWithGoogle();
+    // New here → set up a profile first; returning → straight to the table.
+    setTimeout(() => router.push(hasProfile ? g.href! : "/onboarding"), 650);
+  };
 
   return (
     <main className="mx-auto w-full max-w-5xl flex-1 px-5 pb-28 pt-8 sm:px-8 sm:pt-12">
@@ -76,12 +95,14 @@ function GameDetail({ g }: { g: Game }) {
       {/* ── action row: play + the media strip ── */}
       <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-4">
         {live && g.href ? (
-          <Link
-            href={g.href}
-            className="inline-flex items-center rounded-md bg-white px-7 py-3 text-sm font-semibold text-stage transition hover:bg-white/90"
+          <button
+            type="button"
+            onClick={play}
+            disabled={busy}
+            className="inline-flex items-center rounded-md bg-white px-7 py-3 text-sm font-semibold text-stage transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-70"
           >
-            Play now
-          </Link>
+            {busy ? "Signing in…" : canPlay ? "Play now" : "Log in to play"}
+          </button>
         ) : (
           <span className="inline-flex cursor-default items-center rounded-md border border-[var(--hairline)] px-7 py-3 text-sm font-semibold text-white/40">
             Coming soon

@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useAuth } from "../../_components/AuthProvider";
+import { SignInGate } from "../../_components/SignInGate";
 import {
   Eye,
   EyeOff,
@@ -34,6 +36,30 @@ import VoteSheet from "./_components/VoteSheet";
 import VoteTally from "./_components/VoteTally";
 
 export default function Home() {
+  const { ready, signedIn, hasProfile } = useAuth();
+
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-stage">
+        <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/15 border-t-white" />
+      </div>
+    );
+  }
+  // You can browse the game's page freely, but sitting down at the table needs an account.
+  if (!signedIn || !hasProfile) {
+    return (
+      <div className="flex min-h-screen flex-col bg-stage text-foreground">
+        <SignInGate
+          title="Log in to play"
+          subtitle="Take your seat at the table against real AI models — sign in to start a game."
+        />
+      </div>
+    );
+  }
+  return <MafiaGame />;
+}
+
+function MafiaGame() {
   // Pure view toggles — these never touch the engine, so they live in the page.
   const [showLog, setShowLog] = useState(false);
   const [showPlayers, setShowPlayers] = useState(false);
