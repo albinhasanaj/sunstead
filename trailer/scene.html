@@ -1,0 +1,799 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: #000;
+        overflow: hidden;
+      }
+      #stage {
+        display: block;
+        width: 100vw;
+        height: auto;
+      }
+      #hud {
+        position: fixed;
+        top: 6px;
+        left: 8px;
+        color: #6cf;
+        font: 12px monospace;
+        opacity: 0.55;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="stage" width="1920" height="1080"></canvas>
+    <div id="hud">idle</div>
+    <script>
+      const W = 1920,
+        H = 1080,
+        FPS = 30,
+        DURATION = 33.8;
+      const cv = document.getElementById("stage");
+      const ctx = cv.getContext("2d");
+      const hud = document.getElementById("hud");
+
+      // ── helpers ───────────────────────────────────────────────────────────────
+      function rng(seed) {
+        return function () {
+          seed |= 0;
+          seed = (seed + 0x6d2b79f5) | 0;
+          let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      const clamp = (x, a, b) => (x < a ? a : x > b ? b : x);
+      const lerp = (a, b, t) => a + (b - a) * t;
+      const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+      const easeInOut = (t) =>
+        t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      const smooth = (x, a, b) => {
+        const t = clamp((x - a) / (b - a), 0, 1);
+        return t * t * (3 - 2 * t);
+      };
+      const gauss = (x, c, w) => Math.exp(-Math.pow((x - c) / w, 2));
+      function hexA(hex, a) {
+        const n = parseInt(hex.slice(1), 16);
+        return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+      }
+
+      const BAR = 132; // cinematic letterbox
+      const TCX = W / 2,
+        TCY = H * 0.6,
+        RX = W * 0.3,
+        RY = H * 0.135,
+        N = 6;
+      const LAMP = { x: W / 2, y: BAR + 70 };
+
+      // seats: fixed around the table (NOT orbiting). one is the red liar; front-centre = YOU.
+      const SEATS = [
+        { ang: -90, color: "#ff4550", role: "MAFIA", liar: true }, // far centre — faces us
+        { ang: -30, color: "#5fd3ff", role: "DETECTIVE" }, // far right
+        { ang: 30, color: "#7c8bff", role: null }, // near right (back)
+        { ang: 90, color: "#dbe4ff", role: null, you: true }, // front centre — YOU (back)
+        { ang: 150, color: "#b06bff", role: null }, // near left (back)
+        { ang: 210, color: "#43e0bf", role: "DOCTOR" }, // far left — faces us
+      ];
+
+      // haze motes inside the light cone
+      const MOTES = [];
+      {
+        const r = rng(7);
+        for (let i = 0; i < 90; i++)
+          MOTES.push({
+            x: r(),
+            y: r(),
+            sz: 0.4 + r() * 1.6,
+            sp: 0.006 + r() * 0.02,
+            ph: r(),
+          });
+      }
+      const EMBERS = [];
+      {
+        const r = rng(1337);
+        for (let i = 0; i < 55; i++)
+          EMBERS.push({
+            x: r(),
+            sp: 0.012 + r() * 0.03,
+            ph: r(),
+            sz: 0.6 + r() * 2.0,
+            sw: 0.4 + r() * 1.5,
+          });
+      }
+
+      // ── typography beats (synced to VO) ────────────────────────────────────────
+      const BEATS = [
+        {
+          s: 2.3,
+          e: 5.7,
+          size: 104,
+          lines: [
+            { t: "THE SMARTEST MINDS", c: "#eef2ff" },
+            { t: "ONE TABLE.", c: "#9fb2ff" },
+          ],
+        },
+        {
+          s: 6.2,
+          e: 9.3,
+          size: 124,
+          lines: [
+            { t: "ONE OF THEM", c: "#eef2ff" },
+            { t: "IS LYING.", c: "#ff4550", split: 1 },
+          ],
+        },
+        {
+          s: 9.8,
+          e: 12.2,
+          size: 94,
+          lines: [{ t: "READ.   DECEIVE.   SURVIVE.", c: "#dfe6ff" }],
+        },
+        {
+          s: 14.3,
+          e: 17.0,
+          size: 108,
+          lines: [
+            { t: "ONE VOICE", c: "#eef2ff" },
+            { t: "GOES SILENT.", c: "#c4ccff" },
+          ],
+        },
+        {
+          s: 17.2,
+          e: 21.2,
+          size: 70,
+          lines: [
+            { t: "GPT    CLAUDE    GEMINI    GROK", c: "#bfe8ff" },
+            { t: "+  MANY  MORE", c: "#9fb2ff" },
+          ],
+        },
+        {
+          s: 21.4,
+          e: 22.7,
+          size: 86,
+          lines: [{ t: "NO MASKS.    NO MERCY.", c: "#ff4550", split: 1 }],
+        },
+        {
+          s: 24.7,
+          e: 26.9,
+          size: 104,
+          lines: [
+            { t: "CAN YOU OUTTALK", c: "#eef2ff" },
+            { t: "THE MACHINES?", c: "#9fb2ff" },
+          ],
+        },
+      ];
+      // smooth exposure blooms (NO rings). {t, warmth 0=cool 1=red, power}
+      const BLOOMS = [
+        { t: 6.25, red: 1, p: 0.5 },
+        { t: 12.6, red: 0, p: 0.32 },
+        { t: 22.5, red: 1, p: 1.0 },
+      ];
+
+      // ── global mood curves ─────────────────────────────────────────────────────
+      function mood(t) {
+        const build = smooth(t, 1.5, 22.2); // 0 -> 1 tension ramps in
+        const climax = gauss(t, 22.5, 0.5); // peak flash at the drop
+        const quiet = smooth(t, 22.9, 23.6) * (1 - smooth(t, 27.1, 27.7)); // held-breath silence
+        return { build, climax, quiet };
+      }
+
+      // ── main ────────────────────────────────────────────────────────────────────
+      function renderFrame(time) {
+        const t = time;
+        const M = mood(t);
+        ctx.save();
+        ctx.clearRect(0, 0, W, H);
+
+        drawRoom(t, M);
+
+        // camera: slow push-in, released slightly during the quiet, tiny climax punch
+        let cam = 1.0 + 0.12 * easeInOut(clamp(t / 23, 0, 1));
+        cam -= 0.05 * M.quiet;
+        cam += 0.028 * M.climax;
+        const sway = Math.sin(t * 0.16) * 7,
+          swy = Math.cos(t * 0.12) * 5;
+        ctx.translate(TCX + sway, TCY + swy);
+        ctx.scale(cam, cam);
+        ctx.translate(-TCX, -TCY);
+
+        drawLightCone(t, M);
+        drawTable(t, M);
+        drawSeats(t, M);
+        drawEmbers(t, M);
+
+        ctx.restore(); // camera
+
+        drawBlooms(t);
+
+        // vignette (breathes tighter as tension builds, opens in the quiet)
+        const vg = ctx.createRadialGradient(
+          W / 2,
+          H * 0.5,
+          H * (0.34 - 0.06 * M.build + 0.05 * M.quiet),
+          W / 2,
+          H * 0.5,
+          H * 0.9,
+        );
+        vg.addColorStop(0, "rgba(0,0,0,0)");
+        vg.addColorStop(1, `rgba(0,0,0,${0.72 + 0.12 * M.build})`);
+        ctx.fillStyle = vg;
+        ctx.fillRect(0, 0, W, H);
+
+        // red creep at the edges as it builds, drains away in the quiet
+        if (M.build > 0.02) {
+          const rc = ctx.createRadialGradient(
+            W / 2,
+            H * 0.52,
+            H * 0.3,
+            W / 2,
+            H * 0.52,
+            H * 0.9,
+          );
+          rc.addColorStop(0, "rgba(0,0,0,0)");
+          rc.addColorStop(
+            1,
+            `rgba(120,10,18,${0.22 * M.build * (1 - M.quiet)})`,
+          );
+          ctx.fillStyle = rc;
+          ctx.fillRect(0, 0, W, H);
+        }
+        // quiet darkening — everything sinks toward black for the final line
+        if (M.quiet > 0.01) {
+          ctx.fillStyle = `rgba(2,3,7,${0.55 * M.quiet})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        // END: fade ONLY the room to black, leaving the logo/text lit on top,
+        // so the title holds alone on black for a few seconds before it ends.
+        const bgBlack = smooth(t, 28.6, 29.7);
+        if (bgBlack > 0.001) {
+          ctx.fillStyle = `rgba(0,0,0,${bgBlack})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        drawTitles(t, M);
+        if (t >= 27.4) drawEndCard(t);
+
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, W, BAR);
+        ctx.fillRect(0, H - BAR, W, BAR);
+        if (t < 0.9) {
+          ctx.fillStyle = `rgba(0,0,0,${1 - t / 0.9})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+        // Gently fade the title away to black at the very end — no snap, no sound,
+        // just the text dissolving into quiet darkness.
+        const endFade = smooth(t, 32.0, 33.6);
+        if (endFade > 0.001) {
+          ctx.fillStyle = `rgba(0,0,0,${endFade})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+        ctx.restore();
+      }
+
+      function drawRoom(t, M) {
+        // deep room gradient, warmer near the hanging lamp
+        const bg = ctx.createRadialGradient(
+          W / 2,
+          LAMP.y + 120,
+          60,
+          W / 2,
+          H * 0.62,
+          W * 0.8,
+        );
+        bg.addColorStop(0, "#141625");
+        bg.addColorStop(0.45, "#0a0c16");
+        bg.addColorStop(1, "#020206");
+        ctx.fillStyle = bg;
+        ctx.fillRect(0, 0, W, H);
+        // floor sheen under the table
+        const fl = ctx.createRadialGradient(
+          W / 2,
+          H * 0.82,
+          20,
+          W / 2,
+          H * 0.82,
+          W * 0.5,
+        );
+        fl.addColorStop(0, "rgba(40,52,90,0.18)");
+        fl.addColorStop(1, "rgba(40,52,90,0)");
+        ctx.fillStyle = fl;
+        ctx.fillRect(0, H * 0.6, W, H * 0.4);
+      }
+
+      function lampLevel(t, M) {
+        // steady lamp; faint flicker as tension builds; dimmed during the quiet
+        const flick =
+          1 - 0.05 * M.build * Math.pow(0.5 + 0.5 * Math.sin(t * 19.3), 6);
+        return (0.85 + 0.15 * Math.sin(t * 0.7)) * flick * (1 - 0.55 * M.quiet);
+      }
+
+      function drawLightCone(t, M) {
+        const lv = lampLevel(t, M);
+        // the bulb
+        ctx.save();
+        const b = ctx.createRadialGradient(
+          LAMP.x,
+          LAMP.y,
+          0,
+          LAMP.x,
+          LAMP.y,
+          90,
+        );
+        b.addColorStop(0, `rgba(255,240,214,${0.9 * lv})`);
+        b.addColorStop(0.3, `rgba(255,224,170,${0.5 * lv})`);
+        b.addColorStop(1, "rgba(255,220,160,0)");
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = b;
+        ctx.beginPath();
+        ctx.arc(LAMP.x, LAMP.y, 90, 0, 6.283);
+        ctx.fill();
+        // cord
+        ctx.globalCompositeOperation = "source-over";
+        ctx.strokeStyle = "rgba(0,0,0,0.6)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(LAMP.x, BAR);
+        ctx.lineTo(LAMP.x, LAMP.y - 24);
+        ctx.stroke();
+        // volumetric cone down to the table
+        ctx.globalCompositeOperation = "lighter";
+        ctx.beginPath();
+        ctx.moveTo(LAMP.x - 40, LAMP.y);
+        ctx.lineTo(LAMP.x + 40, LAMP.y);
+        ctx.lineTo(TCX + RX * 1.05, TCY + RY * 0.6);
+        ctx.lineTo(TCX - RX * 1.05, TCY + RY * 0.6);
+        ctx.closePath();
+        const cone = ctx.createLinearGradient(0, LAMP.y, 0, TCY);
+        cone.addColorStop(0, `rgba(255,230,190,${0.16 * lv})`);
+        cone.addColorStop(1, "rgba(210,200,255,0)");
+        ctx.fillStyle = cone;
+        ctx.fill();
+        // haze motes inside the cone
+        for (const m of MOTES) {
+          const yy = lerp(LAMP.y, TCY + 30, (m.y + t * m.sp) % 1);
+          const spread = lerp(60, RX * 1.0, (yy - LAMP.y) / (TCY - LAMP.y));
+          const xx =
+            LAMP.x +
+            (m.x - 0.5) * 2 * spread +
+            Math.sin(t * 0.5 + m.ph * 6.28) * 10;
+          const a =
+            0.12 *
+            lv *
+            Math.sin(clamp((yy - LAMP.y) / (TCY - LAMP.y), 0, 1) * Math.PI);
+          ctx.globalAlpha = clamp(a, 0, 1);
+          ctx.fillStyle = "rgba(255,240,210,1)";
+          ctx.beginPath();
+          ctx.arc(xx, yy, m.sz, 0, 6.283);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.restore();
+      }
+
+      function drawTable(t, M) {
+        const lv = lampLevel(t, M);
+        ctx.save();
+        // drop shadow
+        const sh = ctx.createRadialGradient(
+          TCX,
+          TCY + RY * 0.7,
+          10,
+          TCX,
+          TCY + RY * 0.7,
+          RX * 1.25,
+        );
+        sh.addColorStop(0, "rgba(0,0,0,0.55)");
+        sh.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = sh;
+        ctx.beginPath();
+        ctx.ellipse(TCX, TCY + RY * 0.7, RX * 1.25, RY * 1.1, 0, 0, 6.283);
+        ctx.fill();
+        // table top, lit from the lamp
+        const g = ctx.createRadialGradient(
+          TCX,
+          TCY - RY * 0.3,
+          10,
+          TCX,
+          TCY,
+          RX,
+        );
+        g.addColorStop(
+          0,
+          `rgba(${(60 * lv) | 0},${(58 * lv) | 0},${(70 * lv) | 0},1)`,
+        );
+        g.addColorStop(0.6, "rgba(22,24,34,1)");
+        g.addColorStop(1, "rgba(8,9,15,1)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(TCX, TCY, RX, RY, 0, 0, 6.283);
+        ctx.fill();
+        // rim light
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = `rgba(150,170,255,${0.22 * lv + 0.05})`;
+        ctx.beginPath();
+        ctx.ellipse(TCX, TCY, RX, RY, 0, 0, 6.283);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function seatXY(s) {
+        const a = (s.ang * Math.PI) / 180;
+        return {
+          x: TCX + RX * Math.cos(a),
+          y: TCY + RY * Math.sin(a),
+          depth: (Math.sin(a) + 1) / 2,
+        };
+      }
+
+      function drawSeats(t, M) {
+        const lv = lampLevel(t, M);
+        const arr = SEATS.map((s, i) => ({ ...s, i, ...seatXY(s) }));
+        arr.sort((a, b) => a.depth - b.depth); // far first
+        // who is "speaking" — a soft highlight moving around the table (stops during quiet)
+        const speaker = Math.floor(t / 1.9) % N;
+        const talk = 1 - M.quiet;
+        for (const s of arr) {
+          const facing = s.depth < 0.5 ? "face" : "back";
+          const scale = 0.72 + 0.6 * s.depth;
+          const bob = Math.sin(t * 1.1 + s.i * 1.7) * 3 * scale;
+          drawFigure(
+            s,
+            s.x,
+            s.y + bob,
+            scale,
+            facing,
+            lv,
+            M,
+            t,
+            s.i === speaker ? talk : 0,
+          );
+        }
+        // role tags fade in mid, fade out before the quiet
+        const tagA = smooth(t, 8.5, 10.5) * (1 - smooth(t, 16.4, 17.2));
+        if (tagA > 0.01) {
+          for (const s of arr) {
+            if (!s.role) continue;
+            const p = seatXY(s);
+            const scale = 0.72 + 0.6 * p.depth;
+            drawTag(
+              p.x,
+              p.y - 118 * scale,
+              s.role,
+              s.color,
+              tagA * (s.liar ? 1 : 0.9),
+            );
+          }
+        }
+      }
+
+      // a seated figure: dark silhouette, rim-lit from the lamp, glowing visor in its colour
+      function drawFigure(s, x, y, scale, facing, lv, M, t, talk) {
+        const isLiar = s.liar,
+          you = s.you;
+        const headR = 34 * scale;
+        const shoulderW = 78 * scale,
+          shoulderH = 64 * scale;
+        ctx.save();
+        // seat glow on the table
+        ctx.globalCompositeOperation = "lighter";
+        let gA = 0.18 * lv;
+        let col = s.color;
+        if (isLiar) {
+          const menace = 0.4 + 0.6 * M.build;
+          gA =
+            (0.22 + 0.3 * menace) *
+            (0.6 + 0.4 * Math.sin(t * 3.2)) *
+            (1 - 0.6 * M.quiet);
+        }
+        const tg = ctx.createRadialGradient(
+          x,
+          y + shoulderH * 0.5,
+          0,
+          x,
+          y + shoulderH * 0.5,
+          shoulderW * 1.4,
+        );
+        tg.addColorStop(0, hexA(col, gA));
+        tg.addColorStop(1, hexA(col, 0));
+        ctx.fillStyle = tg;
+        ctx.beginPath();
+        ctx.ellipse(
+          x,
+          y + shoulderH * 0.6,
+          shoulderW * 1.4,
+          shoulderH * 0.7,
+          0,
+          0,
+          6.283,
+        );
+        ctx.fill();
+        ctx.globalCompositeOperation = "source-over";
+
+        // body (shoulders) — dark silhouette
+        ctx.beginPath();
+        ctx.moveTo(x - shoulderW, y + shoulderH);
+        ctx.quadraticCurveTo(
+          x - shoulderW * 0.9,
+          y - shoulderH * 0.2,
+          x - headR * 1.1,
+          y - headR * 0.2,
+        );
+        ctx.lineTo(x + headR * 1.1, y - headR * 0.2);
+        ctx.quadraticCurveTo(
+          x + shoulderW * 0.9,
+          y - shoulderH * 0.2,
+          x + shoulderW,
+          y + shoulderH,
+        );
+        ctx.closePath();
+        const body = ctx.createLinearGradient(0, y - headR, 0, y + shoulderH);
+        body.addColorStop(0, "#14161f");
+        body.addColorStop(1, "#080910");
+        ctx.fillStyle = body;
+        ctx.fill();
+        // shoulder rim light from lamp
+        ctx.strokeStyle = `rgba(190,200,235,${0.18 * lv})`;
+        ctx.lineWidth = 2 * scale;
+        ctx.stroke();
+
+        // head
+        ctx.beginPath();
+        ctx.arc(x, y - headR * 0.5, headR, 0, 6.283);
+        const hg = ctx.createRadialGradient(
+          x - headR * 0.3,
+          y - headR * 0.9,
+          2,
+          x,
+          y - headR * 0.5,
+          headR * 1.3,
+        );
+        hg.addColorStop(0, "#20222e");
+        hg.addColorStop(1, "#0a0b12");
+        ctx.fillStyle = hg;
+        ctx.fill();
+        // rim light on head top
+        ctx.beginPath();
+        ctx.arc(x, y - headR * 0.5, headR, -2.5, -0.7);
+        ctx.strokeStyle = `rgba(210,218,245,${0.5 * lv})`;
+        ctx.lineWidth = 2.4 * scale;
+        ctx.stroke();
+
+        if (facing === "face") {
+          // glowing visor / eyes
+          let vy = y - headR * 0.55,
+            vw = headR * 1.05,
+            vh = headR * 0.34;
+          let bright = 0.6 + 0.4 * Math.sin(t * 2.1 + s.i) + talk * 0.7;
+          if (isLiar) {
+            bright = 0.7 + 0.5 * M.build + 0.3 * Math.sin(t * 3.4);
+          }
+          bright *= 1 - 0.5 * M.quiet;
+          if (isLiar)
+            bright = Math.max(bright, 0.35 * (0.6 + 0.4 * Math.sin(t * 3.4)));
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.shadowColor = col;
+          ctx.shadowBlur = 26 * scale;
+          ctx.fillStyle = hexA(col, clamp(bright, 0, 1));
+          roundRect(x - vw / 2, vy - vh / 2, vw, vh, vh / 2);
+          ctx.fill();
+          // twin eye dots
+          ctx.shadowBlur = 10 * scale;
+          ctx.fillStyle = hexA("#ffffff", clamp(bright * 0.9, 0, 1));
+          ctx.beginPath();
+          ctx.arc(x - vw * 0.22, vy, vh * 0.28, 0, 6.283);
+          ctx.arc(x + vw * 0.22, vy, vh * 0.28, 0, 6.283);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          // back of head — faint colour halo leaking around the silhouette
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          const halo = you ? "#cfe0ff" : col;
+          let hb =
+            (you ? 0.28 : 0.16) * (0.7 + 0.3 * Math.sin(t * 1.7 + s.i)) +
+            talk * 0.25;
+          hb *= 1 - 0.5 * M.quiet;
+          if (you) hb = Math.max(hb, 0.14 * (1 - M.quiet) + 0.05);
+          const hh = ctx.createRadialGradient(
+            x,
+            y - headR * 0.5,
+            headR * 0.6,
+            x,
+            y - headR * 0.5,
+            headR * 1.9,
+          );
+          hh.addColorStop(0, hexA(halo, hb));
+          hh.addColorStop(1, hexA(halo, 0));
+          ctx.fillStyle = hh;
+          ctx.beginPath();
+          ctx.arc(x, y - headR * 0.5, headR * 1.9, 0, 6.283);
+          ctx.fill();
+          ctx.restore();
+        }
+        ctx.restore();
+      }
+
+      function roundRect(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+      }
+
+      function drawTag(x, y, text, color, alpha) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.letterSpacing = "4px";
+        ctx.font = '700 22px "Arial",sans-serif';
+        const w = ctx.measureText(text).width + 34;
+        // plate
+        ctx.fillStyle = "rgba(6,8,14,0.6)";
+        roundRect(x - w / 2, y - 20, w, 32, 6);
+        ctx.fill();
+        ctx.strokeStyle = hexA(color, 0.55);
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+        // text
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = color;
+        ctx.fillText(text, x, y - 3);
+        ctx.restore();
+      }
+
+      function drawEmbers(t, M) {
+        ctx.save();
+        ctx.globalCompositeOperation = "lighter";
+        const dens = 0.5 + 0.5 * M.build,
+          speed = 1 + M.build * 0.8,
+          calm = 1 - 0.6 * M.quiet;
+        for (const e of EMBERS) {
+          const life = (t * e.sp * speed + e.ph) % 1;
+          const y = H * 0.9 - life * H * 0.7;
+          const x = e.x * W + Math.sin(t * e.sw + e.ph * 6.28) * 22;
+          const a = Math.sin(life * Math.PI) * 0.42 * dens * calm;
+          if (a < 0.01) continue;
+          const col = e.ph < 0.4 ? "255,140,90" : "150,190,255";
+          const g = ctx.createRadialGradient(x, y, 0, x, y, e.sz * 4);
+          g.addColorStop(0, `rgba(${col},${a})`);
+          g.addColorStop(1, `rgba(${col},0)`);
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(x, y, e.sz * 4, 0, 6.283);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      function drawBlooms(t) {
+        for (const b of BLOOMS) {
+          const env = gauss(t, b.t, 0.28) * b.p;
+          if (env < 0.01) continue;
+          const col = b.red ? "255,70,74" : "190,205,255";
+          const g = ctx.createRadialGradient(
+            W / 2,
+            H * 0.52,
+            60,
+            W / 2,
+            H * 0.52,
+            W * 0.7,
+          );
+          g.addColorStop(0, `rgba(${col},${0.34 * env})`);
+          g.addColorStop(0.5, `rgba(${col},${0.14 * env})`);
+          g.addColorStop(1, `rgba(${col},0)`);
+          ctx.save();
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, W, H);
+          ctx.restore();
+        }
+      }
+
+      function drawTitles(t, M) {
+        for (const b of BEATS) {
+          if (t < b.s || t > b.e) continue;
+          const alpha =
+            smooth(t, b.s, b.s + 0.55) * (1 - smooth(t, b.e - 0.45, b.e));
+          const rise = (1 - easeOut(clamp((t - b.s) / 0.6, 0, 1))) * 22;
+          const lh = b.size * 1.14,
+            total = b.lines.length;
+          let y0 = H * 0.5 - ((total - 1) * lh) / 2 - 14;
+          ctx.save();
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.letterSpacing = "3px";
+          for (let li = 0; li < total; li++) {
+            const ln = b.lines[li];
+            const y = y0 + li * lh + rise;
+            ctx.font = `900 ${b.size}px "Arial Black","Arial",sans-serif`;
+            if (ln.split) {
+              // smooth eased chromatic split (no random jitter)
+              const off = 3 + 3 * smooth(t, b.s, b.s + 0.8);
+              ctx.globalAlpha = alpha * 0.5;
+              ctx.fillStyle = "rgba(0,220,255,1)";
+              ctx.fillText(ln.t, W / 2 - off, y);
+              ctx.fillStyle = "rgba(255,40,90,1)";
+              ctx.fillText(ln.t, W / 2 + off, y);
+            }
+            ctx.globalAlpha = alpha;
+            ctx.shadowColor = ln.c;
+            ctx.shadowBlur = 26;
+            ctx.fillStyle = ln.c;
+            ctx.fillText(ln.t, W / 2, y);
+            ctx.shadowBlur = 0;
+          }
+          ctx.restore();
+        }
+      }
+
+      function drawEndCard(t) {
+        const a = smooth(t, 27.6, 28.5),
+          sub = smooth(t, 28.2, 29.1),
+          tag = smooth(t, 28.8, 29.7);
+        ctx.save();
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.globalAlpha = a;
+        ctx.letterSpacing = "8px";
+        ctx.font = '900 168px "Impact","Arial Black",sans-serif';
+        ctx.shadowColor = "rgba(120,150,255,0.6)";
+        ctx.shadowBlur = 40;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText("ADVERSARY", W / 2, H * 0.45);
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = sub;
+        ctx.strokeStyle = "rgba(255,70,80,0.9)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(W / 2 - 230, H * 0.45 + 118);
+        ctx.lineTo(W / 2 + 230, H * 0.45 + 118);
+        ctx.stroke();
+        ctx.letterSpacing = "6px";
+        ctx.font = '700 46px "Arial",sans-serif';
+        ctx.fillStyle = "#dfe6ff";
+        ctx.fillText("OUTTALK  THE  MACHINES", W / 2, H * 0.45 + 160);
+        ctx.globalAlpha = tag;
+        ctx.letterSpacing = "10px";
+        ctx.font = '700 28px "Arial",sans-serif';
+        ctx.fillStyle = "#9aa0ff";
+        ctx.fillText(
+          "YOU   vs   AI       TAKE   A   SEAT",
+          W / 2,
+          H * 0.45 + 220,
+        );
+        ctx.restore();
+      }
+
+      // ── capture bridge ───────────────────────────────────────────────────────
+      async function captureRange(start, count) {
+        for (let i = start; i < start + count; i++) {
+          renderFrame(i / FPS);
+          const data = cv.toDataURL("image/jpeg", 0.92);
+          await fetch("/frame", {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body: i + "|" + data,
+          });
+          hud.textContent =
+            "frame " + (i + 1) + "/" + Math.round(DURATION * FPS);
+        }
+        return start + count;
+      }
+      window.captureRange = captureRange;
+      window.TOTAL = Math.round(DURATION * FPS);
+      window.previewAt = (t) => renderFrame(t);
+      renderFrame(10.5);
+    </script>
+  </body>
+</html>

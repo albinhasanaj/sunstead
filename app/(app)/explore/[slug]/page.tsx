@@ -57,12 +57,16 @@ function GameDetail({ g }: { g: Game }) {
           <div className="overflow-hidden rounded-xl border border-[var(--hairline)]">
             <div className="aspect-video w-full">
               {active ? (
-                <Media
-                  key={active}
-                  src={active}
-                  className="h-full w-full object-cover"
-                  big
-                />
+                isVideo(active) ? (
+                  <FeaturedVideo key={active} src={active} />
+                ) : (
+                  <Media
+                    key={active}
+                    src={active}
+                    className="h-full w-full object-cover"
+                    big
+                  />
+                )
               ) : (
                 <div
                   className="h-full w-full"
@@ -277,6 +281,24 @@ function Media({
   }
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt="" className={className} />;
+}
+
+// The featured trailer: a normal video player — a muted autoplay preview with full
+// native controls (hover reveals them; use the volume control to unmute).
+function FeaturedVideo({ src }: { src: string }) {
+  return (
+    // eslint-disable-next-line jsx-a11y/media-has-caption
+    <video
+      src={src}
+      autoPlay
+      muted
+      loop
+      playsInline
+      controls
+      preload="metadata"
+      className="h-full w-full object-cover"
+    />
+  );
 }
 
 function Label({ children }: { children: React.ReactNode }) {

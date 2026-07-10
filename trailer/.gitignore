@@ -1,0 +1,26 @@
+# ── Trailer build artifacts ────────────────────────────────────────────────
+# Everything here is REGENERABLE from the scripts in this folder
+# (scene.html + scene-server.mjs -> frames, then build-cine.ps1 -> video).
+# We keep the small source + the final render in git; the heavy stuff is ignored.
+
+# Rendered frame sequences (thousands of images, tens/hundreds of MB)
+frames/
+frames_cine/
+
+# Encoded intermediate clips and muxed audio (rebuilt by ffmpeg)
+clips/
+*.m4a
+concat.txt
+
+# Copied system fonts (used only by the legacy gameplay build.ps1; they live in
+# C:\Windows\Fonts — not ours to commit)
+*.ttf
+
+# Superseded large renders — keep only adversary-cinematic.mp4 (the final cut)
+adversary-trailer.mp4
+adversary-trailer-720share.mp4
+
+# NOT ignored (kept in git on purpose):
+#   scene.html, scene-server.mjs, build*.ps1, gen-*.mjs, list-voices.mjs,
+#   subs.ass, audio/ (small VO/music/SFX mp3s — avoids paid re-generation),
+#   adversary-cinematic.mp4 (the deliverable)

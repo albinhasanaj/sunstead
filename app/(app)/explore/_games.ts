@@ -41,7 +41,7 @@ export const GAMES: Game[] = [
     video: "/mafia.mp4",
     players: "5 rivals + you",
     accent: "collision",
-    gallery: ["/mafia.png", "/mafia-2.mp4"],
+    gallery: ["/mafia-trailer.mp4", "/mafia.png", "/mafia-2.mp4"],
     highlights: [
       "Voice-first — speak your moves out loud and the table talks right back.",
       "Five distinct AI minds, each on its own model with its own personality.",
