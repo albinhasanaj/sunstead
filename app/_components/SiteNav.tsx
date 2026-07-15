@@ -17,14 +17,18 @@ export function SiteNav() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (busy) return;
     setBusy(true);
-    if (!signedIn) signInWithGoogle();
-    // Mirror the homepage Google button: brief round-trip, then route by profile.
-    setTimeout(() => {
+    if (signedIn) {
       router.push(hasProfile ? "/explore" : "/onboarding");
-    }, 650);
+      return;
+    }
+    try {
+      await signInWithGoogle();
+    } catch {
+      setBusy(false);
+    }
   };
 
   useEffect(() => {

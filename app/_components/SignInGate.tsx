@@ -15,19 +15,45 @@ export function SignInGate({
   title: string;
   subtitle: string;
 }) {
-  const { signedIn, hasProfile, signInWithGoogle } = useAuth();
+  const { signedIn, hasProfile, signInWithGoogle, signInWithEmail } = useAuth();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Signed in but haven't set up a profile → finish onboarding first.
   useEffect(() => {
     if (signedIn && !hasProfile) router.replace("/onboarding");
   }, [signedIn, hasProfile, router]);
 
-  const login = () => {
+  const loginGoogle = async () => {
     if (busy) return;
     setBusy(true);
-    if (!signedIn) signInWithGoogle();
+    setError(null);
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+
+  const sendLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy || !emailValid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await signInWithEmail(email.trim());
+      setSent(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -36,19 +62,55 @@ export function SignInGate({
         {title}
       </h1>
       <p className="mt-3 text-sm leading-relaxed text-white/55">{subtitle}</p>
-      <button
-        type="button"
-        onClick={login}
-        disabled={busy}
-        className="mt-7 inline-flex items-center gap-2.5 rounded-md bg-white px-5 py-3 text-sm font-semibold text-stage transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-70"
-      >
-        {busy ? (
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-stage" />
-        ) : (
-          <GoogleGlyph />
-        )}
-        {busy ? "Signing in…" : "Log in with Google"}
-      </button>
+
+      {sent ? (
+        <p className="mt-7 rounded-md border border-[var(--hairline)] bg-stage px-5 py-4 text-sm text-white/70">
+          Check <span className="text-white">{email.trim()}</span> for a sign-in
+          link.
+        </p>
+      ) : (
+        <div className="mt-7 w-full">
+          <button
+            type="button"
+            onClick={loginGoogle}
+            disabled={busy}
+            className="inline-flex w-full items-center justify-center gap-2.5 rounded-md bg-white px-5 py-3 text-sm font-semibold text-stage transition hover:bg-white/90 disabled:cursor-wait disabled:opacity-70"
+          >
+            {busy ? (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-neutral-400 border-t-stage" />
+            ) : (
+              <GoogleGlyph />
+            )}
+            {busy ? "Signing in…" : "Log in with Google"}
+          </button>
+
+          <div className="my-4 flex items-center gap-3 text-xs text-white/35">
+            <span className="h-px flex-1 bg-[var(--hairline)]" />
+            or
+            <span className="h-px flex-1 bg-[var(--hairline)]" />
+          </div>
+
+          <form onSubmit={sendLink} className="flex flex-col gap-2.5">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@email.com"
+              autoComplete="email"
+              className="w-full rounded-md border border-[var(--hairline)] bg-stage px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/35 focus:border-collision focus:ring-1 focus:ring-collision"
+            />
+            <button
+              type="submit"
+              disabled={busy || !emailValid}
+              className="rounded-md border border-[var(--hairline)] bg-stage px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Email me a sign-in link
+            </button>
+          </form>
+        </div>
+      )}
+
+      {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
     </div>
   );
 }

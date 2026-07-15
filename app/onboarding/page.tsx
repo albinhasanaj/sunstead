@@ -49,8 +49,8 @@ export default function OnboardingPage() {
           <ProfileForm
             defaultName={user?.name ?? ""}
             submitLabel="Enter the arena"
-            onSubmit={(profile) => {
-              saveProfile(profile);
+            onSubmit={async (profile) => {
+              await saveProfile(profile);
               router.replace("/explore");
             }}
           />

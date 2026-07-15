@@ -65,8 +65,8 @@ export default function ProfilePage() {
             <ProfileForm
               initial={profile}
               submitLabel="Save changes"
-              onSubmit={(next) => {
-                saveProfile(next);
+              onSubmit={async (next) => {
+                await saveProfile(next);
                 setEditing(false);
               }}
               onCancel={() => setEditing(false)}
@@ -98,8 +98,8 @@ export default function ProfilePage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    signOut();
+                  onClick={async () => {
+                    await signOut();
                     router.replace("/");
                   }}
                   className="cursor-pointer rounded-full border border-[var(--hairline)] px-6 py-3 text-sm text-muted transition hover:border-white/30 hover:text-foreground"

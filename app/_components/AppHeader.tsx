@@ -16,13 +16,18 @@ export function AppHeader() {
 
   // Signed-out visitors (e.g. on the landing page) get a sign-in CTA instead of the
   // account menu. Mirrors the homepage Google flow: sign in, then route by profile.
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (busy) return;
     setBusy(true);
-    if (!signedIn) signInWithGoogle();
-    setTimeout(() => {
+    if (signedIn) {
       router.push(hasProfile ? "/explore" : "/onboarding");
-    }, 650);
+      return;
+    }
+    try {
+      await signInWithGoogle();
+    } catch {
+      setBusy(false);
+    }
   };
 
   return (

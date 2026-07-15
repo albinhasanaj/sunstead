@@ -29,16 +29,23 @@ function GameDetail({ g }: { g: Game }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const canPlay = signedIn && hasProfile;
-  const play = () => {
+  const play = async () => {
     if (!g.href || busy) return;
     if (canPlay) {
       router.push(g.href);
       return;
     }
     setBusy(true);
-    if (!signedIn) signInWithGoogle();
-    // New here → set up a profile first; returning → straight to the table.
-    setTimeout(() => router.push(hasProfile ? g.href! : "/onboarding"), 650);
+    // Signed in but no profile → finish onboarding; otherwise start Google sign-in.
+    if (signedIn) {
+      router.push(hasProfile ? g.href! : "/onboarding");
+      return;
+    }
+    try {
+      await signInWithGoogle();
+    } catch {
+      setBusy(false);
+    }
   };
 
   return (

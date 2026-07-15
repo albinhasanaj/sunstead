@@ -15,6 +15,7 @@ import {
   type HumanChoice,
 } from "@/lib/gameSessions";
 import { startGame, finishGame } from "@/lib/games";
+import { getRequestUserId } from "@/lib/supabase/server";
 import {
   resolveConfig,
   type ConfigSelection,
@@ -32,10 +33,10 @@ export const maxDuration = 1800;
 
 const DEFAULT_HUMAN_NAME = "You";
 
-// Resolve the owning user for this game. Today the client sends a stable per-browser
-// UUID (fake auth); we accept it if well-formed, else mint an anonymous one. This is
-// the ONE swap-point for real auth: replace the body read with verifying a Supabase
-// Auth JWT (supabase.auth.getUser(token)) and returning the authenticated user id.
+// Resolve the owning user for this game. The authenticated Supabase user (verified
+// from the request's session cookie) is authoritative. If there's no session (e.g.
+// the local `pnpm play` script, or auth not configured) we fall back to a well-formed
+// client-sent id, else mint an anonymous one.
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function resolveUserId(raw: unknown): string {
@@ -226,7 +227,8 @@ export async function POST(req: Request) {
     typeof body?.id === "string" && UUID_RE.test(body.id)
       ? body.id.toLowerCase()
       : crypto.randomUUID();
-  const userId = resolveUserId(body?.userId);
+  // Prefer the verified session user; fall back to a client-sent id (scripts / no auth).
+  const userId = (await getRequestUserId()) ?? resolveUserId(body?.userId);
 
   // ── Reconnect / duplicate-guard (Sweep 1) ─────────────────────────────────────
   // If a loop already owns this id, NEVER spawn a second one (Bug #1). Re-attach this

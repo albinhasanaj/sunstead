@@ -30,13 +30,20 @@ export function GoogleButton({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
-  const handleClick = () => {
+  const handleClick = async () => {
+    if (busy) return;
     setBusy(true);
-    if (!signedIn) signInWithGoogle();
-    // Simulate the Google round-trip, then route by whether a profile exists.
-    setTimeout(() => {
+    // Already signed in → skip the OAuth round-trip and route by profile.
+    if (signedIn) {
       router.push(hasProfile ? "/explore" : "/onboarding");
-    }, 650);
+      return;
+    }
+    try {
+      // Redirects to Google; the page navigates away and returns via /auth/callback.
+      await signInWithGoogle();
+    } catch {
+      setBusy(false);
+    }
   };
 
   const plain = variant === "plain";

@@ -74,9 +74,9 @@ export function UserButton() {
             <button
               type="button"
               role="menuitem"
-              onClick={() => {
+              onClick={async () => {
                 setOpen(false);
-                signOut();
+                await signOut();
                 router.replace("/");
               }}
               className="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-muted transition-colors hover:bg-white/[0.06] hover:text-foreground"

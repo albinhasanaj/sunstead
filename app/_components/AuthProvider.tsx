@@ -8,11 +8,14 @@ import {
   useMemo,
   useState,
 } from "react";
-
-const STORAGE_KEY = "sunstead.auth";
+import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
+import {
+  getSupabaseBrowserClient,
+  supabaseAuthConfigured,
+} from "@/lib/supabase/client";
 
 export type GoogleUser = {
-  /** Stable per-user id (UUID). Fake today; drops in as the Supabase auth user id later. */
+  /** Supabase auth user id (uuid). Stable per account, sent to the server as the owner. */
   id: string;
   name: string;
   email: string;
@@ -31,127 +34,163 @@ export type Profile = {
   tagline: string;
 };
 
-type Stored = {
+type AuthValue = {
   user: GoogleUser | null;
   profile: Profile | null;
-};
-
-type AuthValue = Stored & {
-  /** False until localStorage has been read on the client. */
+  /** False until the initial session has been read on the client. */
   ready: boolean;
-  /** Stable owning-user id sent to the server (null when signed out). */
+  /** Owning-user id sent to the server (null when signed out). */
   userId: string | null;
   signedIn: boolean;
   hasProfile: boolean;
-  signInWithGoogle: () => GoogleUser;
-  saveProfile: (profile: Profile) => void;
-  signOut: () => void;
+  /** Redirects to Google's OAuth consent screen; resolves as the page navigates away. */
+  signInWithGoogle: () => Promise<void>;
+  /** Sends a passwordless magic-link / OTP email. Resolves once the email is queued. */
+  signInWithEmail: (email: string) => Promise<void>;
+  /** Persists the profile to the user's Supabase metadata. */
+  saveProfile: (profile: Profile) => Promise<void>;
+  signOut: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthValue | null>(null);
 
-const FIRST = ["Alex", "Sam", "Jordan", "Casey", "Riley", "Morgan", "Taylor", "Jamie"];
-const LAST = ["Carter", "Nguyen", "Patel", "Rivera", "Kim", "Schmidt", "Lopez", "Okafor"];
-
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function fabricateGoogleUser(): GoogleUser {
-  const first = pick(FIRST);
-  const last = pick(LAST);
-  const handle = `${first}.${last}`.toLowerCase();
-  const suffix = Math.floor(100 + Math.random() * 900);
+function readProfile(user: User | null): Profile | null {
+  const raw = user?.user_metadata?.profile;
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Partial<Profile>;
+  if (typeof p.displayName !== "string" || !p.displayName) return null;
   return {
-    id: crypto.randomUUID(),
-    name: `${first} ${last}`,
-    email: `${handle}${suffix}@gmail.com`,
-    avatarSeed: `${handle}${suffix}`,
+    displayName: p.displayName,
+    color: typeof p.color === "string" ? p.color : "#6366f1",
+    emoji: typeof p.emoji === "string" ? p.emoji : (p.displayName[0] ?? "?"),
+    photo: typeof p.photo === "string" ? p.photo : null,
+    tagline: typeof p.tagline === "string" ? p.tagline : "",
   };
 }
 
+function readUser(user: User | null): GoogleUser | null {
+  if (!user) return null;
+  const meta = user.user_metadata ?? {};
+  const email = user.email ?? (typeof meta.email === "string" ? meta.email : "");
+  const name =
+    (typeof meta.full_name === "string" && meta.full_name) ||
+    (typeof meta.name === "string" && meta.name) ||
+    (email ? email.split("@")[0] : "Player");
+  const avatarSeed =
+    (typeof meta.avatarSeed === "string" && meta.avatarSeed) || email || user.id;
+  return { id: user.id, name, email, avatarSeed };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<Stored>({ user: null, profile: null });
+  const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as Stored;
-        let user = parsed.user ?? null;
-        // Backfill a stable id for sessions saved before user ids existed.
-        if (user && !user.id) {
-          user = { ...user, id: crypto.randomUUID() };
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify({ user, profile: parsed.profile ?? null }));
-          } catch {
-            // storage unavailable; the id stays in memory for this session
-          }
-        }
-        setState({ user, profile: parsed.profile ?? null });
-      }
-    } catch {
-      // Ignore malformed storage; treat as signed out.
+    if (!supabaseAuthConfigured()) {
+      setReady(true);
+      return;
     }
-    setReady(true);
-  }, []);
+    const supabase = getSupabaseBrowserClient();
+    let active = true;
 
-  const persist = useCallback((next: Stored) => {
-    setState(next);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // Storage may be unavailable (private mode); state stays in memory.
-    }
-  }, []);
-
-  const signInWithGoogle = useCallback(() => {
-    const user = fabricateGoogleUser();
-    setState((prev) => {
-      const next = { user, profile: prev.profile };
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-    return user;
-  }, []);
-
-  const saveProfile = useCallback(
-    (profile: Profile) => {
-      setState((prev) => {
-        const next = { user: prev.user, profile };
-        try {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-        } catch {
-          // ignore
-        }
-        return next;
+    supabase.auth
+      .getSession()
+      .then(({ data }: { data: { session: Session | null } }) => {
+        if (!active) return;
+        setSession(data.session);
+        setReady(true);
       });
-    },
-    [],
-  );
 
-  const signOut = useCallback(() => {
-    persist({ user: null, profile: null });
-  }, [persist]);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, next: Session | null) => {
+        setSession(next);
+        setReady(true);
+      },
+    );
 
-  const value = useMemo<AuthValue>(
-    () => ({
-      ...state,
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const signInWithGoogle = useCallback(async () => {
+    const supabase = getSupabaseBrowserClient();
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
+    });
+  }, []);
+
+  const signInWithEmail = useCallback(async (email: string) => {
+    const supabase = getSupabaseBrowserClient();
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        shouldCreateUser: true,
+      },
+    });
+    if (error) throw error;
+  }, []);
+
+  const saveProfile = useCallback(async (profile: Profile) => {
+    const supabase = getSupabaseBrowserClient();
+    // The photo is a (potentially large) data URL — keep it OUT of user_metadata so it
+    // never bloats the auth JWT / session cookie. The lightweight fields sync server-side.
+    const { photo, ...rest } = profile;
+    const { data, error } = await supabase.auth.updateUser({
+      data: { profile: rest, full_name: rest.displayName },
+    });
+    if (error) throw error;
+    if (data.user) {
+      if (typeof window !== "undefined") {
+        const key = `sunstead.photo.${data.user.id}`;
+        try {
+          if (photo) localStorage.setItem(key, photo);
+          else localStorage.removeItem(key);
+        } catch {
+          // storage unavailable (private mode) — photo stays in memory this session
+        }
+      }
+      setSession((prev) => (prev ? { ...prev, user: data.user } : prev));
+    }
+  }, []);
+
+  const signOut = useCallback(async () => {
+    const supabase = getSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    setSession(null);
+  }, []);
+
+  const value = useMemo<AuthValue>(() => {
+    const currentUser = session?.user ?? null;
+    const user = readUser(currentUser);
+    let profile = readProfile(currentUser);
+    // Overlay the locally-stored camera photo (kept out of the JWT — see saveProfile).
+    if (profile && user && typeof window !== "undefined") {
+      try {
+        const photo = localStorage.getItem(`sunstead.photo.${user.id}`);
+        if (photo) profile = { ...profile, photo };
+      } catch {
+        // storage unavailable — fall back to the photo-less profile
+      }
+    }
+    return {
+      user,
+      profile,
       ready,
-      userId: state.user?.id ?? null,
-      signedIn: state.user !== null,
-      hasProfile: state.profile !== null,
+      userId: user?.id ?? null,
+      signedIn: user !== null,
+      hasProfile: profile !== null,
       signInWithGoogle,
+      signInWithEmail,
       saveProfile,
       signOut,
-    }),
-    [state, ready, signInWithGoogle, saveProfile, signOut],
-  );
+    };
+  }, [session, ready, signInWithGoogle, signInWithEmail, saveProfile, signOut]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
